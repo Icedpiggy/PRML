@@ -1,0 +1,244 @@
+"""
+数据采集脚本 - 使用键盘控制机械臂收集演示轨迹数据
+"""
+
+import numpy as np
+import pickle
+import os
+import pybullet as p
+from envs import ArmEnv
+
+
+class DataCollector:
+	SAVE_DIR = 'data'
+	MIN_STEPS = 10
+	MAX_STEPS = 25000
+	POS_SPEED = 0.5
+	ROT_SPEED = 0.5
+	
+	def __init__(self, debug=False, randomize=False, show_boundary=False):
+		self.env = ArmEnv(render=True, verbose=False, debug=debug, 
+						 randomize=randomize, show_bnd=show_boundary)
+		self.save_dir = self.SAVE_DIR
+		self.pos_speed = self.POS_SPEED
+		self.rot_speed = self.ROT_SPEED
+		
+		if not os.path.exists(self.save_dir):
+			os.makedirs(self.save_dir)
+		
+		self.existing_count = self._count_existing_trajectories()
+	
+	def _count_existing_trajectories(self):
+		if not os.path.exists(self.save_dir):
+			return 0
+		
+		files = [f for f in os.listdir(self.save_dir) 
+			 if f.startswith('trajectory_') and f.endswith('.pkl')]
+		return len(files)
+	
+	def _get_action_from_keyboard(self):
+		keys = p.getKeyboardEvents()
+		action = np.zeros(7)
+		
+		for key, event in keys.items():
+			if not (event & p.KEY_IS_DOWN):
+				continue
+			
+			if key in [ord('c'), ord('C')]:
+				action[2] += self.pos_speed
+			elif key in [ord('z'), ord('Z')]:
+				action[2] -= self.pos_speed
+			elif key == p.B3G_LEFT_ARROW:
+				action[0] -= self.pos_speed
+			elif key == p.B3G_RIGHT_ARROW:
+				action[0] += self.pos_speed
+			elif key == p.B3G_UP_ARROW:
+				action[1] += self.pos_speed
+			elif key == p.B3G_DOWN_ARROW:
+				action[1] -= self.pos_speed
+			elif key in [ord('j'), ord('J')]:
+				action[3] += self.rot_speed
+			elif key in [ord('l'), ord('L')]:
+				action[3] -= self.rot_speed
+			elif key in [ord('k'), ord('K')]:
+				action[4] += self.rot_speed
+			elif key in [ord('i'), ord('I')]:
+				action[4] -= self.rot_speed
+			elif key in [ord('u'), ord('U')]:
+				action[5] += self.rot_speed
+			elif key in [ord('o'), ord('O')]:
+				action[5] -= self.rot_speed
+			elif key == p.B3G_SPACE:
+				action[6] = -1.0
+			elif key in [ord('b'), ord('B')]:
+				action[6] = 1.0
+		
+		return action
+	
+	def _handle_view_switch(self, keys, current_view):
+		view_keys = {'front': ord('1'), 'top': ord('2'), 'side': ord('3')}
+		for view, vk in view_keys.items():
+			if vk in keys and keys[vk] & p.KEY_WAS_TRIGGERED and view != current_view:
+				self.env.set_camera_view(view)
+				return view
+		return current_view
+	
+	def _print_progress(self, step, reward, total_reward, info):
+		if step % 100 == 0:
+			st = f"conn:{info['conn']} hit:{info['hit']}"
+			print(f"\rsteps: {step:4d}, [{st}], reward: {reward:6.2f}, "
+				  f"total: {total_reward:8.2f}", end="")
+	
+	def _print_result(self, success, step, traj, info):
+		print(f"\n{'='*60}")
+		if success:
+			print(f"Trajectory completed successfully!")
+		else:
+			print(f"Trajectory failed!")
+			reason = 'Boundary violation' if info['bnd_vio'] else 'Unknown'
+			print(f"  Reason: {reason}")
+		print(f"  Steps: {step}")
+		print(f"  Total reward: {sum(traj['rewards']):.2f}")
+		print(f"  Connected: {info['conn']}")
+		print(f"  Hit target: {info['hit']}")
+	
+	def _print_controls(self):
+		print("\n" + "=" * 60)
+		print("=== Starting trajectory collection ===")
+		print("=" * 60)
+		print("Keyboard controls:")
+		print("  Arm movement (IK control):")
+		print("    C/Z: move end-effector up/down")
+		print("    Arrow keys: move end-effector left/right/forward/backward")
+		print("  Gripper rotation:")
+		print("    J/L: rotate around X axis (roll)")
+		print("    I/K: rotate around Y axis (pitch)")
+		print("    U/O: rotate around Z axis (yaw)")
+		print("  Gripper control:")
+		print("    Space: close gripper")
+		print("    B: open gripper")
+		print("  View switching:")
+		print("    1/2/3: front/top/side view")
+		print("  Other:")
+		print("    ESC: exit (no save)")
+		print("    Auto-save on success, no save on failure")
+		print("=" * 60)
+	
+	def _collect_loop(self, traj_id):
+		traj = {'observations': [], 'actions': [], 'rewards': [], 'info': []}
+		step = 0
+		view = 'front'
+		
+		while step < self.MAX_STEPS:
+			action = self._get_action_from_keyboard()
+			obs, reward, done, info = self.env.step(action)
+			
+			traj['observations'].append(obs)
+			traj['actions'].append(action)
+			traj['rewards'].append(reward)
+			traj['info'].append(info)
+			
+			self._print_progress(step, reward, sum(traj['rewards']), info)
+			step += 1
+			
+			if done:
+				self._print_result(info['hit'], step, traj, info)
+				return traj if info['hit'] else None
+			
+			keys = p.getKeyboardEvents()
+			view = self._handle_view_switch(keys, view)
+			
+			if 27 in keys and keys[27] & p.KEY_WAS_TRIGGERED:
+				print("\n\nUser exited (not saved)")
+				return None
+		
+		print(f"\n\nReached max step limit ({self.MAX_STEPS})")
+		return None
+	
+	def collect_single_trajectory(self):
+		print("\n" + "=" * 60)
+		print("PRML Project - Arm Imitation Learning Data Collection")
+		print("=" * 60)
+		print("\nTask:")
+		print("  1. Connect two rods")
+		print("  2. Grasp the combined rod")
+		print("  3. Strike the target on the wall")
+		print(f"\nNotes:")
+		print(f"  - Trajectories are automatically saved as separate files")
+		print(f"  - Press ESC to exit (no save)")
+		print(f"  - Auto-save on successful target hit")
+		print(f"  - No save on failure")
+		print(f"  - Max steps per trajectory: {self.MAX_STEPS}")
+		print("=" * 60)
+		
+		self._print_controls()
+		tid = self.existing_count + 1
+		traj = self._collect_loop(tid)
+		
+		if traj is None:
+			print("\n\nData collection ended (not saved)")
+			return
+		
+		if len(traj['observations']) < self.MIN_STEPS:
+			print(f"\n\n⚠ Trajectory too short (<{self.MIN_STEPS} steps), discarded")
+			return
+		
+		self._save_traj(traj, tid)
+		print(f"\n" + "=" * 60)
+		print("Data collection completed successfully")
+		print(f"All data saved in: {os.path.abspath(self.save_dir)}")
+		print("=" * 60)
+	
+	def _save_traj(self, traj, traj_id):
+		fn = os.path.join(self.save_dir, f'trajectory_{traj_id:03d}.pkl')
+		
+		traj['metadata'] = {
+			'traj_id': traj_id,
+			'length': len(traj['observations']),
+			'total_reward': sum(traj['rewards']),
+			'mean_reward': np.mean(traj['rewards']),
+			'final_connected': traj['info'][-1]['conn'] if traj['info'] else False,
+			'final_hit': traj['info'][-1]['hit'] if traj['info'] else False
+		}
+		
+		with open(fn, 'wb') as f:
+			pickle.dump(traj, f)
+		
+		md = traj['metadata']
+		print(f"✓ Trajectory saved: {fn}")
+		print(f"  Length: {md['length']} steps")
+		print(f"  Total reward: {md['total_reward']:.2f}")
+		print(f"  Mean reward: {md['mean_reward']:.2f}")
+		print(f"  Connected: {md['final_connected']}")
+		print(f"  Hit target: {md['final_hit']}")
+	
+	def close(self):
+		self.env.close()
+
+
+def main():
+	import argparse
+	
+	parser = argparse.ArgumentParser(description='PRML Project - Arm Data Collection')
+	parser.add_argument('-d', '--debug', action='store_true', help='Show debug info')
+	parser.add_argument('-r', '--randomize', action='store_true', help='Randomize initial position')
+	parser.add_argument('-b', '--show-boundary', action='store_true', help='Show boundary markers')
+	
+	args = parser.parse_args()
+	collector = DataCollector(debug=args.debug, randomize=args.randomize, 
+							 show_boundary=args.show_boundary)
+	
+	try:
+		collector.collect_single_trajectory()
+	except KeyboardInterrupt:
+		print("\n\nProgram interrupted")
+	except Exception as e:
+		print(f"\nError: {e}")
+		import traceback
+		traceback.print_exc()
+	finally:
+		collector.close()
+
+
+if __name__ == "__main__":
+	main()
