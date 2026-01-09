@@ -70,7 +70,7 @@ class ArmEnv:
 		self.bnd_markers = []
 		self.conn = False
 		self.gripper_closed = False
-		self.conn_reward_given = False  # 连接奖励是否已发放
+		self.conn_reward_given = False
 		self.gripper_helpers = {}
 		self.rod_helpers = {}
 		
@@ -154,9 +154,8 @@ class ArmEnv:
 						  replaceItemUniqueId=self.rod_helpers[rod_name]['axis'])
 	
 	def _get_rod_state(self, rid):
-		# Fix: Check if rid is valid before accessing
 		if rid is None:
-			return [0.0] * 13  # Return zeros for invalid rod state
+			return [0.0] * 13
 		pos, orn = p.getBasePositionAndOrientation(rid)
 		vel, ang_v = p.getBaseVelocity(rid)
 		return list(pos) + list(orn) + list(vel) + list(ang_v)
@@ -206,7 +205,6 @@ class ArmEnv:
 	
 	def _check_bnd_vio(self) -> bool:
 		def is_out(rid):
-			# Fix: Check if rid is valid before accessing
 			if rid is None:
 				return False
 			return np.linalg.norm(np.array(p.getBasePositionAndOrientation(rid)[0][:2])) > self.BND_R
@@ -218,9 +216,8 @@ class ArmEnv:
 		return np.array(p.getMatrixFromQuaternion(q)).reshape(3, 3) @ np.array([0, 0, 1])
 	
 	def _get_ends(self, rid, length=ROD_L) -> List[np.ndarray]:
-		# Fix: Check if rid is valid before accessing
 		if rid is None:
-			return [np.zeros(3), np.zeros(3)]  # Return zero vectors for invalid rod
+			return [np.zeros(3), np.zeros(3)]
 		pos, orn = p.getBasePositionAndOrientation(rid)
 		axis = self._get_axis(orn)
 		return [np.array(pos) + axis * (length / 2), np.array(pos) - axis * (length / 2)]
@@ -258,7 +255,7 @@ class ArmEnv:
 		
 		self.conn = False
 		self.gripper_closed = False
-		self.conn_reward_given = False  # 重置连接奖励标志
+		self.conn_reward_given = False
 		
 		for i in range(self.NUM_ARM_JOINTS):
 			p.resetJointState(self.arm, i, self.INIT_JOINTS[i], 0)
@@ -358,8 +355,6 @@ class ArmEnv:
 		if self.render:
 			time.sleep(self.DT)
 		
-		# Fix: Calculate info dict first to control evaluation order
-		# Check connection BEFORE calculating reward to avoid accessing deleted rods
 		info = {
 			'conn': self._check_conn(),
 			'hit': self._check_hit(),
@@ -375,7 +370,6 @@ class ArmEnv:
 			ends = self._get_ends(self.comb, self.COMB_L)
 			r += 1.0 - min(np.linalg.norm(e - np.array(self.tgt_pos)) for e in ends)
 		else:
-			# Fix: Check if rods still exist before accessing (may be None during merging)
 			if self.rod_a is None or self.rod_b is None:
 				return r - 0.1
 			
@@ -392,7 +386,6 @@ class ArmEnv:
 			if abs(ctr_d - self.ROD_L) < 0.05:
 				r += (1.0 - abs(ctr_d - self.ROD_L) / 0.05) * 5
 		
-		# 连接奖励只加一次
 		if self.conn and not self.conn_reward_given:
 			r += 10
 			self.conn_reward_given = True
@@ -405,7 +398,6 @@ class ArmEnv:
 		if self.conn:
 			return True
 		
-		# Fix: Check if rods still exist before accessing
 		if self.rod_a is None or self.rod_b is None:
 			return False
 		
@@ -431,7 +423,6 @@ class ArmEnv:
 				cp = (end1 + end2) / 2
 				direction = (end1 - end2) / np.linalg.norm(end1 - end2)
 				
-				# Fix: Calculate angle before deleting rods (for verbose output)
 				axis_a, axis_b = self._get_axis(orn_a), self._get_axis(orn_b)
 				ang_d = np.degrees(np.arccos(min(abs(np.dot(axis_a, axis_b)), 1.0)))
 				
@@ -440,7 +431,6 @@ class ArmEnv:
 				dot = np.dot(z_axis, direction)
 				cross_norm = np.linalg.norm(cross)
 				
-				# Fix: Robust quaternion calculation with numerical stability
 				if cross_norm < 1e-6:
 					orn = [0, 0, 0, 1] if dot > 0 else [1, 0, 0, 0]
 				else:
@@ -448,7 +438,6 @@ class ArmEnv:
 					cos_half = (1 + dot) / 2
 					norm = np.sqrt(sin_half**2 + cos_half**2)
 					
-					# Prevent division by zero
 					if norm < 1e-10:
 						if self.verbose:
 							print("Warning: Invalid quaternion norm, using default orientation")
@@ -456,7 +445,6 @@ class ArmEnv:
 					else:
 						orn = [cross[0]/(2*norm), cross[1]/(2*norm), cross[2]/(2*norm), cos_half/norm]
 					
-					# Normalize the quaternion to ensure validity
 					orn_norm = np.sqrt(sum(x**2 for x in orn))
 					if orn_norm > 1e-10:
 						orn = [x / orn_norm for x in orn]
@@ -465,7 +453,6 @@ class ArmEnv:
 							print("Warning: Invalid quaternion, using default orientation")
 						orn = [0, 0, 0, 1]
 				
-				# Step simulation with exception handling
 				for _ in range(3):
 					try:
 						p.stepSimulation()
@@ -483,7 +470,6 @@ class ArmEnv:
 						if self.verbose:
 							print(f"Error setting gripper joint {gj}: {e}")
 				
-				# Disable collision for rods being merged
 				try:
 					p.setCollisionFilterPair(self.arm, self.rod_a, -1, -1, 0)
 				except Exception as e:
@@ -495,7 +481,6 @@ class ArmEnv:
 					if self.verbose:
 						print(f"Error setting collision filter for rod_b: {e}")
 				
-				# Move rods far away before removing
 				try:
 					p.resetBasePositionAndOrientation(self.rod_a, [0, 0, 10], [0, 0, 0, 1])
 				except Exception as e:
@@ -507,7 +492,6 @@ class ArmEnv:
 					if self.verbose:
 						print(f"Error moving rod_b away: {e}")
 				
-				# Step simulation to let physics settle
 				for _ in range(3):
 					try:
 						p.stepSimulation()
@@ -515,7 +499,6 @@ class ArmEnv:
 						if self.verbose:
 							print(f"Error during simulation step (post-move): {e}")
 				
-				# Remove the old rods
 				try:
 					p.removeBody(self.rod_a)
 				except Exception as e:
@@ -528,7 +511,6 @@ class ArmEnv:
 						print(f"Error removing rod_b: {e}")
 				self.rod_a = self.rod_b = None
 				
-				# Clear debug items
 				try:
 					p.removeAllUserDebugItems()
 				except Exception as e:
@@ -536,7 +518,6 @@ class ArmEnv:
 						print(f"Error removing debug items: {e}")
 				self.rod_helpers = {}
 				
-				# Create combined rod
 				self.comb = self._create_rod([0.5, 0, 0.5, 1], cp, self.COMB_L, self.COMB_M, orn)
 				try:
 					p.resetBaseVelocity(self.comb, [0, 0, 0], [0, 0, 0])
@@ -554,7 +535,6 @@ class ArmEnv:
 					if self.verbose:
 						print(f"Error setting collision filter for comb-wall: {e}")
 				
-				# Final simulation steps with exception handling
 				for _ in range(5):
 					try:
 						p.stepSimulation()
@@ -574,8 +554,7 @@ class ArmEnv:
 			except Exception as e:
 				if self.verbose:
 					print(f"Error during rod merging: {e}")
-				# If merging fails, ensure state is consistent
-				self.conn = True  # Mark as connected to prevent retry
+				self.conn = True
 				return True
 		return False
 	
@@ -583,7 +562,6 @@ class ArmEnv:
 		if self.conn and self.comb:
 			ends = self._get_ends(self.comb, self.COMB_L)
 			return min(np.linalg.norm(e - np.array(self.tgt_pos)) for e in ends) < self.TGT_TH
-		# Fix: Check if rod_a still exists before accessing
 		if self.rod_a is None:
 			return False
 		return np.linalg.norm(np.array(p.getBasePositionAndOrientation(self.rod_a)[0]) -
@@ -710,7 +688,6 @@ def test_env(show_bnd=False, randomize=False, debug=False):
 					d = min(np.linalg.norm(e - np.array(env.tgt_pos)) for e in ends)
 					print(f"{step + 1:4d}: [{st}] end_tgt_dist:{d:.3f}m reward:{reward:.2f}")
 				else:
-					# Fix: Check if rods still exist before accessing
 					if env.rod_a is not None and env.rod_b is not None:
 						ends_a, ends_b = env._get_ends(env.rod_a), env._get_ends(env.rod_b)
 						end_d = min(np.linalg.norm(pa - pb) for pa in ends_a for pb in ends_b)
@@ -743,3 +720,5 @@ if __name__ == "__main__":
 	args = parser.parse_args()
 	
 	test_env(show_bnd=args.show_boundary, randomize=args.randomize, debug=args.debug)
+
+

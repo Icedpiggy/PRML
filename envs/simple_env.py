@@ -42,6 +42,7 @@ class SimpleRodEnv:
 		self.tgt_id = None
 		self.tgt_pos = None
 		self.conn = False
+		self.conn_reward_given = False  # 连接奖励是否已发放
 		
 		if self.show_bnd:
 			self._create_bnd_marker()
@@ -62,7 +63,7 @@ class SimpleRodEnv:
 		wc = p.createCollisionShape(p.GEOM_BOX, halfExtents=he)
 		
 		if self.randomize:
-			wall_x, wall_y, wall_z = self.rng.uniform(-0.5, 0.5), self.rng.uniform(0.9, 1.1), 0.5
+			wall_x, wall_y, wall_z = self.rng.uniform(-0.5, 0.5), self.rng.uniform(0.9, 1.05), 0.5
 			wall_angle = self.rng.uniform(-np.pi/6, np.pi/6)
 			wall_orn = p.getQuaternionFromEuler([0, 0, wall_angle])
 			
@@ -137,6 +138,7 @@ class SimpleRodEnv:
 			p.removeBody(self.comb)
 			self.comb = None
 		self.conn = False
+		self.conn_reward_given = False  # 重置连接奖励标志
 		
 		if self.rod_a is not None:
 			p.removeBody(self.rod_a)
@@ -224,8 +226,10 @@ class SimpleRodEnv:
 			if abs(ctr_d - self.ROD_L) < 0.05:
 				r += (1.0 - abs(ctr_d - self.ROD_L) / 0.05) * 5
 		
-		if self._check_conn():
+		# 连接奖励只加一次
+		if self.conn and not self.conn_reward_given:
 			r += 10
+			self.conn_reward_given = True
 		if self._check_hit():
 			r += 50
 		
@@ -331,7 +335,12 @@ def test_env(show_bnd=False, randomize=False):
 
 
 if __name__ == "__main__":
-	import sys
-	show_bnd = '--show-boundary' in sys.argv or '-b' in sys.argv
-	randomize = '--randomize' in sys.argv or '-r' in sys.argv
-	test_env(show_bnd=show_bnd, randomize=randomize)
+	import argparse
+	
+	parser = argparse.ArgumentParser(description='PRML项目 - SimpleRodEnv测试环境')
+	parser.add_argument('-b', '--show-boundary', action='store_true', help='显示边界标记')
+	parser.add_argument('-r', '--randomize', action='store_true', help='随机化初始位置')
+	
+	args = parser.parse_args()
+	
+	test_env(show_bnd=args.show_boundary, randomize=args.randomize)
