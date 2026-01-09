@@ -8,7 +8,7 @@ from typing import Tuple, Dict, List
 class SimpleRodEnv:
 	ROD_L = 0.2  # Single rod length (m)
 	ROD_R = 0.02  # Rod radius (m)
-	ROD_M = 0.5  # Rod mass (kg)
+	ROD_M = 0.25  # Rod mass (kg)
 	COMB_L = ROD_L * 2  # Combined rod length (m)
 	COMB_M = ROD_M * 2  # Combined rod mass (kg)
 	TGT_TH = 0.05  # Target hit threshold (m)
@@ -51,8 +51,10 @@ class SimpleRodEnv:
 	def _create_rod(self, color, pos, length=ROD_L, mass=ROD_M, orn=[0, 0, 0, 1]):
 		v = p.createVisualShape(p.GEOM_CYLINDER, radius=self.ROD_R, length=length, rgbaColor=color)
 		c = p.createCollisionShape(p.GEOM_CYLINDER, radius=self.ROD_R, height=length)
-		return p.createMultiBody(baseMass=mass, baseCollisionShapeIndex=c,
-								baseVisualShapeIndex=v, basePosition=pos, baseOrientation=orn)
+		rod_id = p.createMultiBody(baseMass=mass, baseCollisionShapeIndex=c,
+								   baseVisualShapeIndex=v, basePosition=pos, baseOrientation=orn)
+		p.changeDynamics(rod_id, -1, lateralFriction=0.9, spinningFriction=0.1, rollingFriction=0.01)
+		return rod_id
 	
 	def _create_walls(self):
 		he = [0.5, 0.02, 0.5]
@@ -117,6 +119,19 @@ class SimpleRodEnv:
 	def _rand_pos(self, x_rng, y_rng, z):
 		return [self.rng.uniform(*x_rng), self.rng.uniform(*y_rng), z]
 	
+	def _rand_orn(self):
+		if self.rng.random() < 0.5:
+			return [0, 0, 0, 1]
+		else:
+			axis_angle = self.rng.uniform(0, 2 * np.pi)
+			return p.getQuaternionFromEuler([np.pi/2, 0, axis_angle])
+	
+	def _get_orn_type(self, orn):
+		mat = np.array(p.getMatrixFromQuaternion(orn)).reshape(3, 3)
+		axis = mat @ np.array([0, 0, 1])
+		z_alignment = abs(axis[2])
+		return 'upright' if z_alignment > 0.9 else 'flat'
+	
 	def reset(self):
 		if self.comb:
 			p.removeBody(self.comb)
@@ -128,11 +143,21 @@ class SimpleRodEnv:
 		if self.rod_b is not None:
 			p.removeBody(self.rod_b)
 		
-		pos_a = self._rand_pos((-0.4, 0.4), (0.2, 0.4), 0.1) if self.randomize else [0.4, 0.2, 0.1]
-		pos_b = self._rand_pos((-0.4, 0.4), (0.2, 0.4), 0.1) if self.randomize else [-0.4, 0.2, 0.1]
+		orn_a = self._rand_orn() if self.randomize else [0, 0, 0, 1]
+		orn_b = self._rand_orn() if self.randomize else [0, 0, 0, 1]
 		
-		self.rod_a = self._create_rod([1, 0, 0, 1], pos_a)
-		self.rod_b = self._create_rod([0, 0, 1, 1], pos_b)
+		def get_pos_z(orn):
+			orn_type = self._get_orn_type(orn)
+			if orn_type == 'flat':
+				return self.ROD_R
+			else:
+				return self.ROD_L / 2
+		
+		pos_a = self._rand_pos((-0.4, 0.4), (0.2, 0.4), get_pos_z(orn_a)) if self.randomize else [0.4, 0.2, get_pos_z(orn_a)]
+		pos_b = self._rand_pos((-0.4, 0.4), (0.2, 0.4), get_pos_z(orn_b)) if self.randomize else [-0.4, 0.2, get_pos_z(orn_b)]
+		
+		self.rod_a = self._create_rod([1, 0, 0, 1], pos_a, orn=orn_a)
+		self.rod_b = self._create_rod([0, 0, 1, 1], pos_b, orn=orn_b)
 		
 		if self.wall is not None:
 			p.removeBody(self.wall)
@@ -141,8 +166,8 @@ class SimpleRodEnv:
 		
 		self._create_walls()
 		
-		for rid, pos in [(self.rod_a, pos_a), (self.rod_b, pos_b)]:
-			p.resetBasePositionAndOrientation(rid, pos, [0, 0, 0, 1])
+		for rid, pos, orn in [(self.rod_a, pos_a, orn_a), (self.rod_b, pos_b, orn_b)]:
+			p.resetBasePositionAndOrientation(rid, pos, orn)
 			p.resetBaseVelocity(rid, [0, 0, 0], [0, 0, 0])
 		
 		return self.get_obs()

@@ -8,11 +8,11 @@ from typing import Tuple, Dict, List
 class ArmEnv:
 	ROD_L = 0.2  # Single rod length (m)
 	ROD_R = 0.02  # Rod radius (m)
-	ROD_M = 0.5  # Rod mass (kg)
+	ROD_M = 0.25  # Rod mass (kg)
 	COMB_L = ROD_L * 2  # Combined rod length (m)
 	COMB_M = ROD_M * 2  # Combined rod mass (kg)
 	TGT_TH = 0.05  # Target hit threshold (m)
-	TOL = 0.04  # Connection tolerance (m)
+	TOL = 0.1  # Connection tolerance
 	END_TH = ROD_L * TOL  # End-to-end threshold for connection
 	CTR_MIN = ROD_L * (1.0 - TOL)  # Min center distance for connection
 	CTR_MAX = ROD_L * (1.0 + TOL)  # Max center distance for connection
@@ -85,6 +85,9 @@ class ArmEnv:
 			p.setCollisionFilterGroupMask(self.arm, link, collisionFilterGroup=1, collisionFilterMask=1)
 		p.setCollisionFilterGroupMask(self.arm, -1, collisionFilterGroup=1, collisionFilterMask=1)
 		
+		for gj in self.GRIPPER_JOINTS:
+			p.changeDynamics(self.arm, gj, lateralFriction=1.5, spinningFriction=0.1, rollingFriction=0.01)
+		
 		if self.render and self.debug:
 			self._add_gripper_helpers()
 		
@@ -103,8 +106,11 @@ class ArmEnv:
 	def _create_rod(self, color, pos, length=ROD_L, mass=ROD_M, orn=[0, 0, 0, 1]):
 		v = p.createVisualShape(p.GEOM_CYLINDER, radius=self.ROD_R, length=length, rgbaColor=color)
 		c = p.createCollisionShape(p.GEOM_CYLINDER, radius=self.ROD_R, height=length)
-		return p.createMultiBody(baseMass=mass, baseCollisionShapeIndex=c,
-								baseVisualShapeIndex=v, basePosition=pos, baseOrientation=orn)
+		rod_id = p.createMultiBody(baseMass=mass, baseCollisionShapeIndex=c,
+								   baseVisualShapeIndex=v, basePosition=pos, baseOrientation=orn)
+		p.changeDynamics(rod_id, -1, lateralFriction=0.9, spinningFriction=0.1, rollingFriction=0.01,
+						linearDamping=0.04, angularDamping=0.04, restitution=0.1)
+		return rod_id
 	
 	def _add_rod_helpers(self, rod_id, rod_name, length=None):
 		if not self.render or not self.debug:
@@ -212,26 +218,60 @@ class ArmEnv:
 	def _rand_pos(self, x_rng, y_rng, z):
 		return [self.rng.uniform(*x_rng), self.rng.uniform(*y_rng), z]
 	
+	def _rand_orn(self):
+		if self.rng.random() < 0.5:
+			return [0, 0, 0, 1]
+		else:
+			axis_angle = self.rng.uniform(0, 2 * np.pi)
+			return p.getQuaternionFromEuler([np.pi/2, 0, axis_angle])
+	
+	def _get_orn_type(self, orn):
+		mat = np.array(p.getMatrixFromQuaternion(orn)).reshape(3, 3)
+		axis = mat @ np.array([0, 0, 1])
+		z_alignment = abs(axis[2])
+		return 'upright' if z_alignment > 0.9 else 'flat'
+	
 	def reset(self):
-		if self.comb:
-			p.removeBody(self.comb)
-			self.comb = None
-		self.conn = False
-		self.gripper_closed = False
-		
 		if self.arm is None:
 			self._create_arm()
 		
+		if self.comb:
+			p.resetBasePositionAndOrientation(self.comb, [0, 0, 10], [0, 0, 0, 1])
+			p.removeBody(self.comb)
+			self.comb = None
 		if self.rod_a is not None:
+			p.resetBasePositionAndOrientation(self.rod_a, [0, 0, 10], [0, 0, 0, 1])
 			p.removeBody(self.rod_a)
 		if self.rod_b is not None:
+			p.resetBasePositionAndOrientation(self.rod_b, [0, 0, 10], [0, 0, 0, 1])
 			p.removeBody(self.rod_b)
 		
-		pos_a = self._rand_pos((-0.4, 0.4), (0.2, 0.4), 0.1) if self.randomize else [0.4, 0.2, 0.1]
-		pos_b = self._rand_pos((-0.4, 0.4), (0.2, 0.4), 0.1) if self.randomize else [-0.4, 0.2, 0.1]
+		self.conn = False
+		self.gripper_closed = False
 		
-		self.rod_a = self._create_rod([1, 0, 0, 1], pos_a)
-		self.rod_b = self._create_rod([0, 0, 1, 1], pos_b)
+		for i in range(self.NUM_ARM_JOINTS):
+			p.resetJointState(self.arm, i, self.INIT_JOINTS[i], 0)
+			p.setJointMotorControl2(self.arm, i, p.POSITION_CONTROL, targetPosition=self.INIT_JOINTS[i], force=self.JOINT_FORCE)
+		
+		for gj in self.GRIPPER_JOINTS:
+			p.resetJointState(self.arm, gj, self.GRIPPER_OPEN, 0)
+			p.setJointMotorControl2(self.arm, gj, p.POSITION_CONTROL, targetPosition=self.GRIPPER_OPEN, force=self.GRIPPER_FORCE)
+		
+		orn_a = self._rand_orn() if self.randomize else [0, 0, 0, 1]
+		orn_b = self._rand_orn() if self.randomize else [0, 0, 0, 1]
+		
+		def get_pos_z(orn):
+			orn_type = self._get_orn_type(orn)
+			if orn_type == 'flat':
+				return self.ROD_R
+			else:
+				return self.ROD_L / 2
+		
+		pos_a = self._rand_pos((-0.4, 0.4), (0.2, 0.4), get_pos_z(orn_a)) if self.randomize else [0.4, 0.2, get_pos_z(orn_a)]
+		pos_b = self._rand_pos((-0.4, 0.4), (0.2, 0.4), get_pos_z(orn_b)) if self.randomize else [-0.4, 0.2, get_pos_z(orn_b)]
+		
+		self.rod_a = self._create_rod([1, 0, 0, 1], pos_a, orn=orn_a)
+		self.rod_b = self._create_rod([0, 0, 1, 1], pos_b, orn=orn_b)
 		
 		p.removeAllUserDebugItems()
 		self.rod_helpers = {}
@@ -248,16 +288,6 @@ class ArmEnv:
 			p.removeBody(self.tgt_id)
 		
 		self._create_walls()
-		
-		for rid, pos in [(self.rod_a, pos_a), (self.rod_b, pos_b)]:
-			p.resetBasePositionAndOrientation(rid, pos, [0, 0, 0, 1])
-			p.resetBaseVelocity(rid, [0, 0, 0], [0, 0, 0])
-		
-		for i, pos in enumerate(self.INIT_JOINTS):
-			p.resetJointState(self.arm, i, pos)
-		
-		for gj in self.GRIPPER_JOINTS:
-			p.resetJointState(self.arm, gj, self.GRIPPER_OPEN)
 		
 		return self.get_obs()
 	
@@ -380,16 +410,38 @@ class ArmEnv:
 				norm = np.sqrt(sin_half**2 + cos_half**2)
 				orn = [cross[0]/(2*norm), cross[1]/(2*norm), cross[2]/(2*norm), cos_half/norm]
 			
+			for _ in range(3):
+				p.stepSimulation()
+			
+			self.gripper_closed = False
+			for gj in self.GRIPPER_JOINTS:
+				p.resetJointState(self.arm, gj, self.GRIPPER_OPEN, 0)
+				p.setJointMotorControl2(self.arm, gj, p.POSITION_CONTROL, 
+									   targetPosition=self.GRIPPER_OPEN, force=self.GRIPPER_FORCE)
+			
+			p.setCollisionFilterPair(self.arm, self.rod_a, -1, -1, 0)
+			p.setCollisionFilterPair(self.arm, self.rod_b, -1, -1, 0)
+			
+			p.resetBasePositionAndOrientation(self.rod_a, [0, 0, 10], [0, 0, 0, 1])
+			p.resetBasePositionAndOrientation(self.rod_b, [0, 0, 10], [0, 0, 0, 1])
+			
+			for _ in range(3):
+				p.stepSimulation()
+			
 			p.removeBody(self.rod_a)
 			p.removeBody(self.rod_b)
 			self.rod_a = self.rod_b = None
 			
 			p.removeAllUserDebugItems()
 			self.rod_helpers = {}
-			self.gripper_helpers = {}
 			
 			self.comb = self._create_rod([0.5, 0, 0.5, 1], cp, self.COMB_L, self.COMB_M, orn)
 			p.resetBaseVelocity(self.comb, [0, 0, 0], [0, 0, 0])
+			p.setCollisionFilterPair(self.arm, self.comb, -1, -1, 0)
+			p.setCollisionFilterPair(self.wall, self.comb, -1, -1, 0)
+			
+			for _ in range(5):
+				p.stepSimulation()
 			
 			if self.render and self.debug:
 				self._add_gripper_helpers()
@@ -469,7 +521,6 @@ def test_env(show_bnd=False, randomize=False, debug=False):
 	print("  2: top view")
 	print("  3: side view")
 	print("\nOther:")
-	print("  R: reset environment")
 	print("  Ctrl+C: exit")
 	print("=" * 50)
 	print("Start simulation...")
@@ -511,19 +562,16 @@ def test_env(show_bnd=False, randomize=False, debug=False):
 						action[6] = -1.0
 					elif key in [ord('b'), ord('B')]:
 						action[6] = 1.0
-					elif key == ord('1'):
-						current_view = 'front'
-						env.set_camera_view(current_view)
-					elif key == ord('2'):
-						current_view = 'top'
-						env.set_camera_view(current_view)
-					elif key == ord('3'):
-						current_view = 'side'
-						env.set_camera_view(current_view)
-					elif key in [ord('r'), ord('R')] and event & p.KEY_WAS_TRIGGERED:
-						env.reset()
-						step = 0
-						print("Environment reset")
+					elif event & p.KEY_WAS_TRIGGERED:
+						if key == ord('1'):
+							current_view = 'front'
+							env.set_camera_view(current_view)
+						elif key == ord('2'):
+							current_view = 'top'
+							env.set_camera_view(current_view)
+						elif key == ord('3'):
+							current_view = 'side'
+							env.set_camera_view(current_view)
 			
 			obs, reward, done, info = env.step(action)
 			step += 1
