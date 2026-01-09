@@ -1,7 +1,3 @@
-"""
-数据采集脚本 - 使用键盘控制机械臂收集演示轨迹数据
-"""
-
 import numpy as np
 import pickle
 import os
@@ -10,16 +6,21 @@ from envs import ArmEnv
 
 
 class DataCollector:
-	SAVE_DIR = 'data'
+	BASE_DIR = 'data'
 	MIN_STEPS = 10
 	MAX_STEPS = 25000
 	POS_SPEED = 0.5
 	ROT_SPEED = 0.5
 	
-	def __init__(self, debug=False, randomize=False, show_boundary=False):
+	def __init__(self, dataset_type='train', debug=False, randomize=False, show_boundary=False):
 		self.env = ArmEnv(render=True, verbose=False, debug=debug, 
 						 randomize=randomize, show_bnd=show_boundary)
-		self.save_dir = self.SAVE_DIR
+		
+		if dataset_type not in ['train', 'val']:
+			raise ValueError(f"dataset_type must be 'train' or 'val', got '{dataset_type}'")
+		self.dataset_type = dataset_type
+		
+		self.save_dir = os.path.join(self.BASE_DIR, dataset_type)
 		self.pos_speed = self.POS_SPEED
 		self.rot_speed = self.ROT_SPEED
 		
@@ -35,6 +36,22 @@ class DataCollector:
 		files = [f for f in os.listdir(self.save_dir) 
 			 if f.startswith('trajectory_') and f.endswith('.pkl')]
 		return len(files)
+	
+	def _ask_dataset_type(self):
+		print("\n" + "=" * 60)
+		print("Select dataset type:")
+		print("  1. Training data (will be saved to data/train/)")
+		print("  2. Validation data (will be saved to data/val/)")
+		print("=" * 60)
+		
+		while True:
+			choice = input("\nEnter your choice (1 or 2): ").strip()
+			if choice == '1':
+				return 'train'
+			elif choice == '2':
+				return 'val'
+			else:
+				print("Invalid choice. Please enter 1 or 2.")
 	
 	def _get_action_from_keyboard(self):
 		keys = p.getKeyboardEvents()
@@ -163,6 +180,9 @@ class DataCollector:
 		print("  1. Connect two rods")
 		print("  2. Grasp the combined rod")
 		print("  3. Strike the target on the wall")
+		print(f"\nDataset type: {self.dataset_type.upper()}")
+		print(f"Save directory: {os.path.abspath(self.save_dir)}")
+		print(f"Existing trajectories: {self.existing_count}")
 		print(f"\nNotes:")
 		print(f"  - Trajectories are automatically saved as separate files")
 		print(f"  - Press ESC to exit (no save)")
@@ -220,13 +240,21 @@ def main():
 	import argparse
 	
 	parser = argparse.ArgumentParser(description='PRML Project - Arm Data Collection')
+	parser.add_argument('-t', '--type', type=str, choices=['train', 'val'], default=None,
+					   help='Dataset type (train or val). If not specified, will ask interactively.')
 	parser.add_argument('-d', '--debug', action='store_true', help='Show debug info')
 	parser.add_argument('-r', '--randomize', action='store_true', help='Randomize initial position')
 	parser.add_argument('-b', '--show-boundary', action='store_true', help='Show boundary markers')
 	
 	args = parser.parse_args()
-	collector = DataCollector(debug=args.debug, randomize=args.randomize, 
-							 show_boundary=args.show_boundary)
+	
+	if args.type is None:
+		dataset_type = DataCollector._ask_dataset_type(None)
+	else:
+		dataset_type = args.type
+	
+	collector = DataCollector(dataset_type=dataset_type, debug=args.debug, 
+							 randomize=args.randomize, show_boundary=args.show_boundary)
 	
 	try:
 		collector.collect_single_trajectory()
