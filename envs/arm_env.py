@@ -529,11 +529,6 @@ class ArmEnv:
 				except Exception as e:
 					if self.verbose:
 						print(f"Error setting collision filter for comb: {e}")
-				try:
-					p.setCollisionFilterPair(self.wall, self.comb, -1, -1, 0)
-				except Exception as e:
-					if self.verbose:
-						print(f"Error setting collision filter for comb-wall: {e}")
 				
 				for _ in range(5):
 					try:
@@ -722,3 +717,4 @@ if __name__ == "__main__":
 	test_env(show_bnd=args.show_boundary, randomize=args.randomize, debug=args.debug)
 
 
+	
