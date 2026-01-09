@@ -11,7 +11,7 @@ class SimpleRodEnv:
 	ROD_M = 0.5  # Rod mass (kg)
 	COMB_L = ROD_L * 2  # Combined rod length (m)
 	COMB_M = ROD_M * 2  # Combined rod mass (kg)
-	TGT_TH = 0.08  # Target hit threshold (m)
+	TGT_TH = 0.05  # Target hit threshold (m)
 	TOL = 0.04  # Connection tolerance (m)
 	END_TH = ROD_L * TOL  # End-to-end threshold for connection
 	CTR_MIN = ROD_L * (1.0 - TOL)  # Min center distance for connection
@@ -23,7 +23,10 @@ class SimpleRodEnv:
 		self.verbose = verbose
 		self.show_bnd = show_bnd
 		self.randomize = randomize
-		self.rng = np.random.RandomState()
+		seed = int(time.time_ns())
+		self.rng = np.random.default_rng(seed)
+		if self.verbose:
+			print(f"Random seed: {seed}")
 		
 		self.pc = p.connect(p.GUI if render else p.DIRECT)
 		if render:
@@ -36,8 +39,13 @@ class SimpleRodEnv:
 		
 		self.rod_a = self.rod_b = self.comb = None
 		self.wall = None
+		self.tgt_id = None
 		self.tgt_pos = None
 		self.conn = False
+		
+		if self.show_bnd:
+			self._create_bnd_marker()
+		
 		self.reset()
 	
 	def _create_rod(self, color, pos, length=ROD_L, mass=ROD_M, orn=[0, 0, 0, 1]):
@@ -52,27 +60,29 @@ class SimpleRodEnv:
 		wc = p.createCollisionShape(p.GEOM_BOX, halfExtents=he)
 		
 		if self.randomize:
-			wall_x = self.rng.uniform(-0.5, 0.5)
-			wall_y = self.rng.uniform(0.7, 0.9)
-			wall_z = 0.5
-			angle = self.rng.uniform(-np.pi/12, np.pi/12)
-			wall_orn = [0, 0, np.sin(angle/2), np.cos(angle/2)]
-			self.tgt_pos = [wall_x - 0.03 * np.cos(angle), wall_y - 0.03 * np.sin(angle), wall_z]
+			wall_x, wall_y, wall_z = self.rng.uniform(-0.5, 0.5), self.rng.uniform(0.9, 1.1), 0.5
+			wall_angle = self.rng.uniform(-np.pi/6, np.pi/6)
+			wall_orn = p.getQuaternionFromEuler([0, 0, wall_angle])
+			
+			tgt_r = self.rng.uniform(0.0, 0.25)
+			tgt_a = self.rng.uniform(0, 2 * np.pi)
+			tgt_local = [tgt_r * np.cos(tgt_a), 0, tgt_r * np.sin(tgt_a)]
+			self.tgt_pos = [wall_x + tgt_local[0] * np.cos(wall_angle) - tgt_local[1] * np.sin(wall_angle),
+							wall_y + tgt_local[0] * np.sin(wall_angle) + tgt_local[1] * np.cos(wall_angle),
+							wall_z + tgt_local[2]]
 		else:
-			wall_x, wall_y, wall_z = 0.0, 0.8, 0.5
-			wall_orn = [0, 0, 1, 0]
-			self.tgt_pos = [wall_x - 0.03, wall_y, wall_z]
+			wall_x, wall_y, wall_z = 0.0, 1.0, 0.5
+			wall_orn = [0, 0, 0, 1]
+			self.tgt_pos = [wall_x, wall_y, wall_z]
 		
 		self.wall = p.createMultiBody(baseMass=0, baseCollisionShapeIndex=wc,
 									 baseVisualShapeIndex=wv,
 									 basePosition=[wall_x, wall_y, wall_z],
 									 baseOrientation=wall_orn)
 		
-		tv = p.createVisualShape(p.GEOM_SPHERE, radius=0.05, rgbaColor=[1, 1, 0, 1])
+		tv = p.createVisualShape(p.GEOM_SPHERE, radius=self.TGT_TH, rgbaColor=[1, 1, 0, 1])
 		self.tgt_id = p.createMultiBody(baseMass=0, baseVisualShapeIndex=tv, basePosition=self.tgt_pos)
 		
-		if self.show_bnd:
-			self._create_bnd_marker()
 		return self.wall, self.tgt_id
 	
 	def _create_bnd_marker(self):
@@ -113,18 +123,23 @@ class SimpleRodEnv:
 			self.comb = None
 		self.conn = False
 		
-		if self.randomize:
-			pos_a = self._rand_pos((-0.5, 0.5), (0.1, 0.4), 0.1)
-			pos_b = self._rand_pos((-0.5, 0.5), (0.1, 0.4), 0.1)
-		else:
-			pos_a = [0.5, 0.2, 0.1]
-			pos_b = [-0.5, 0.2, 0.1]
+		if self.rod_a is not None:
+			p.removeBody(self.rod_a)
+		if self.rod_b is not None:
+			p.removeBody(self.rod_b)
 		
-		if self.rod_a is None or self.rod_b is None:
-			self.rod_a = self._create_rod([1, 0, 0, 1], pos_a)
-			self.rod_b = self._create_rod([0, 0, 1, 1], pos_b)
-		if self.wall is None:
-			self._create_walls()
+		pos_a = self._rand_pos((-0.4, 0.4), (0.2, 0.4), 0.1) if self.randomize else [0.4, 0.2, 0.1]
+		pos_b = self._rand_pos((-0.4, 0.4), (0.2, 0.4), 0.1) if self.randomize else [-0.4, 0.2, 0.1]
+		
+		self.rod_a = self._create_rod([1, 0, 0, 1], pos_a)
+		self.rod_b = self._create_rod([0, 0, 1, 1], pos_b)
+		
+		if self.wall is not None:
+			p.removeBody(self.wall)
+		if self.tgt_id is not None:
+			p.removeBody(self.tgt_id)
+		
+		self._create_walls()
 		
 		for rid, pos in [(self.rod_a, pos_a), (self.rod_b, pos_b)]:
 			p.resetBasePositionAndOrientation(rid, pos, [0, 0, 0, 1])
