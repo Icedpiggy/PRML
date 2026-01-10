@@ -58,7 +58,6 @@ class ArmEnv:
 			p.resetDebugVisualizerCamera(1.5, 0, 0, [0.5, 0, 0.3])
 			p.configureDebugVisualizer(p.COV_ENABLE_GUI, 1)
 			p.configureDebugVisualizer(p.COV_ENABLE_MOUSE_PICKING, 0)
-			p.configureDebugVisualizer(p.COV_ENABLE_FULLSCREEN, 1)
 		
 		p.setAdditionalSearchPath(pybullet_data.getDataPath())
 		p.setGravity(0, 0, -9.81)
