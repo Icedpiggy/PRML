@@ -18,11 +18,12 @@ class SimpleRodEnv:
 	CTR_MAX = ROD_L * (1.0 + TOL)  # Max center distance for connection
 	BND_R = 2.0  # Boundary radius (m)
 	
-	def __init__(self, render=True, verbose=False, debug=False, show_bnd=False, randomize=False):
+	def __init__(self, render=True, verbose=False, debug=False, show_bnd=False, randomize=False, hard=False):
 		self.render = render
 		self.verbose = verbose
 		self.show_bnd = show_bnd
 		self.randomize = randomize
+		self.hard = hard
 		seed = int(time.time_ns())
 		self.rng = np.random.default_rng(seed)
 		if self.verbose:
@@ -42,7 +43,7 @@ class SimpleRodEnv:
 		self.tgt_id = None
 		self.tgt_pos = None
 		self.conn = False
-		self.conn_reward_given = False  # 连接奖励是否已发放
+		self.conn_reward_given = False
 		
 		if self.show_bnd:
 			self._create_bnd_marker()
@@ -62,7 +63,7 @@ class SimpleRodEnv:
 		wv = p.createVisualShape(p.GEOM_BOX, halfExtents=he, rgbaColor=[0.7, 0.7, 0.7, 1])
 		wc = p.createCollisionShape(p.GEOM_BOX, halfExtents=he)
 		
-		if self.randomize:
+		if self.hard:
 			wall_x, wall_y, wall_z = self.rng.uniform(-0.5, 0.5), self.rng.uniform(0.9, 1.05), 0.5
 			wall_angle = self.rng.uniform(-np.pi/6, np.pi/6)
 			wall_orn = p.getQuaternionFromEuler([0, 0, wall_angle])
@@ -121,11 +122,11 @@ class SimpleRodEnv:
 		return [self.rng.uniform(*x_rng), self.rng.uniform(*y_rng), z]
 	
 	def _rand_orn(self):
-		if self.rng.random() < 0.5:
-			return [0, 0, 0, 1]
-		else:
+		if self.hard and self.rng.random() < 0.5:
 			axis_angle = self.rng.uniform(0, 2 * np.pi)
 			return p.getQuaternionFromEuler([np.pi/2, 0, axis_angle])
+		else:
+			return [0, 0, 0, 1]
 	
 	def _get_orn_type(self, orn):
 		mat = np.array(p.getMatrixFromQuaternion(orn)).reshape(3, 3)
@@ -138,7 +139,7 @@ class SimpleRodEnv:
 			p.removeBody(self.comb)
 			self.comb = None
 		self.conn = False
-		self.conn_reward_given = False  # 重置连接奖励标志
+		self.conn_reward_given = False
 		
 		if self.rod_a is not None:
 			p.removeBody(self.rod_a)
@@ -155,8 +156,12 @@ class SimpleRodEnv:
 			else:
 				return self.ROD_L / 2
 		
-		pos_a = self._rand_pos((-0.4, 0.4), (0.2, 0.4), get_pos_z(orn_a)) if self.randomize else [0.4, 0.2, get_pos_z(orn_a)]
-		pos_b = self._rand_pos((-0.4, 0.4), (0.2, 0.4), get_pos_z(orn_b)) if self.randomize else [-0.4, 0.2, get_pos_z(orn_b)]
+		if self.randomize:
+			pos_a = [self.rng.uniform(0.1, 0.4), self.rng.uniform(0.2, 0.4), get_pos_z(orn_a)]
+			pos_b = [self.rng.uniform(-0.4, -0.1), self.rng.uniform(0.2, 0.4), get_pos_z(orn_b)]
+		else:
+			pos_a = [0.4, 0.2, get_pos_z(orn_a)]
+			pos_b = [-0.4, 0.2, get_pos_z(orn_b)]
 		
 		self.rod_a = self._create_rod([1, 0, 0, 1], pos_a, orn=orn_a)
 		self.rod_b = self._create_rod([0, 0, 1, 1], pos_b, orn=orn_b)
@@ -226,7 +231,6 @@ class SimpleRodEnv:
 			if abs(ctr_d - self.ROD_L) < 0.05:
 				r += (1.0 - abs(ctr_d - self.ROD_L) / 0.05) * 5
 		
-		# 连接奖励只加一次
 		if self.conn and not self.conn_reward_given:
 			r += 10
 			self.conn_reward_given = True
@@ -300,9 +304,9 @@ class SimpleRodEnv:
 		p.disconnect()
 
 
-def test_env(show_bnd=False, randomize=False):
-	print(f"Init env... (bnd:{'on' if show_bnd else 'off'}, rand:{'on' if randomize else 'off'})")
-	env = SimpleRodEnv(render=True, verbose=False, debug=True, show_bnd=show_bnd, randomize=randomize)
+def test_env(show_bnd=False, randomize=False, hard=False):
+	print(f"Init env... (bnd:{'on' if show_bnd else 'off'}, rand:{'on' if randomize else 'off'}, hard:{'on' if hard else 'off'})")
+	env = SimpleRodEnv(render=True, verbose=False, debug=True, show_bnd=show_bnd, randomize=randomize, hard=hard)
 	step = 0
 	print("Start simulation...")
 	
@@ -337,10 +341,11 @@ def test_env(show_bnd=False, randomize=False):
 if __name__ == "__main__":
 	import argparse
 	
-	parser = argparse.ArgumentParser(description='PRML项目 - SimpleRodEnv测试环境')
-	parser.add_argument('-b', '--show-boundary', action='store_true', help='显示边界标记')
-	parser.add_argument('-r', '--randomize', action='store_true', help='随机化初始位置')
+	parser = argparse.ArgumentParser(description='PRML Project - SimpleRodEnv Test Environment')
+	parser.add_argument('-b', '--show-boundary', action='store_true', help='Show boundary markers')
+	parser.add_argument('-r', '--randomize', action='store_true', help='Randomize initial positions')
+	parser.add_argument('--hard', action='store_true', help='Enable hard mode (rods may be flat)')
 	
 	args = parser.parse_args()
 	
-	test_env(show_bnd=args.show_boundary, randomize=args.randomize)
+	test_env(show_bnd=args.show_boundary, randomize=args.randomize, hard=args.hard)

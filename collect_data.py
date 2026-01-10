@@ -8,13 +8,13 @@ from envs import ArmEnv
 class DataCollector:
 	BASE_DIR = 'data'
 	MIN_STEPS = 10
-	MAX_STEPS = 25000
+	MAX_STEPS = 10000
 	POS_SPEED = 0.5
 	ROT_SPEED = 0.5
 	
-	def __init__(self, dataset_type='train', debug=False, randomize=False, show_boundary=False):
+	def __init__(self, dataset_type='train', debug=False, randomize=False, show_boundary=False, hard=False):
 		self.env = ArmEnv(render=True, verbose=False, debug=debug, 
-						 randomize=randomize, show_bnd=show_boundary)
+						 randomize=randomize, show_bnd=show_boundary, hard=hard)
 		
 		if dataset_type not in ['train', 'val']:
 			raise ValueError(f"dataset_type must be 'train' or 'val', got '{dataset_type}'")
@@ -241,10 +241,11 @@ def main():
 	
 	parser = argparse.ArgumentParser(description='PRML Project - Arm Data Collection')
 	parser.add_argument('-t', '--type', type=str, choices=['train', 'val'], default=None,
-					   help='Dataset type (train or val). If not specified, will ask interactively.')
+					   help='Dataset type (train or val). If not specified, will ask interactively')
 	parser.add_argument('-d', '--debug', action='store_true', help='Show debug info')
 	parser.add_argument('-r', '--randomize', action='store_true', help='Randomize initial position')
 	parser.add_argument('-b', '--show-boundary', action='store_true', help='Show boundary markers')
+	parser.add_argument('--hard', action='store_true', help='Enable hard mode (rods may be flat)')
 	
 	args = parser.parse_args()
 	
@@ -254,7 +255,7 @@ def main():
 		dataset_type = args.type
 	
 	collector = DataCollector(dataset_type=dataset_type, debug=args.debug, 
-							 randomize=args.randomize, show_boundary=args.show_boundary)
+							 randomize=args.randomize, show_boundary=args.show_boundary, hard=args.hard)
 	
 	try:
 		collector.collect_single_trajectory()

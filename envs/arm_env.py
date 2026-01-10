@@ -41,12 +41,13 @@ class ArmEnv:
 	ROD_COLORS = {'rod_a': [1, 0, 0], 'rod_b': [0, 0, 1], 'comb': [0.5, 0, 0.5]}  # Rod colors
 	DEBUG_LINE_LEN = 0.15  # Debug line extension length
 	
-	def __init__(self, render=True, verbose=False, debug=False, show_bnd=False, randomize=False):
+	def __init__(self, render=True, verbose=False, debug=False, show_bnd=False, randomize=False, hard=False):
 		self.render = render
 		self.verbose = verbose
 		self.debug = debug
 		self.show_bnd = show_bnd
 		self.randomize = randomize
+		self.hard = hard
 		seed = int(time.time_ns())
 		self.rng = np.random.default_rng(seed)
 		if self.verbose:
@@ -57,6 +58,7 @@ class ArmEnv:
 			p.resetDebugVisualizerCamera(1.5, 0, 0, [0.5, 0, 0.3])
 			p.configureDebugVisualizer(p.COV_ENABLE_GUI, 1)
 			p.configureDebugVisualizer(p.COV_ENABLE_MOUSE_PICKING, 0)
+			p.configureDebugVisualizer(p.COV_ENABLE_FULLSCREEN, 1)
 		
 		p.setAdditionalSearchPath(pybullet_data.getDataPath())
 		p.setGravity(0, 0, -9.81)
@@ -165,7 +167,7 @@ class ArmEnv:
 		wv = p.createVisualShape(p.GEOM_BOX, halfExtents=he, rgbaColor=[0.7, 0.7, 0.7, 1])
 		wc = p.createCollisionShape(p.GEOM_BOX, halfExtents=he)
 		
-		if self.randomize:
+		if self.hard:
 			wall_x, wall_y, wall_z = self.rng.uniform(-0.3, 0.3), self.rng.uniform(0.9, 1.0), 0.5
 			wall_angle = self.rng.uniform(-np.pi/6, np.pi/6)
 			wall_orn = p.getQuaternionFromEuler([0, 0, wall_angle])
@@ -179,7 +181,13 @@ class ArmEnv:
 		else:
 			wall_x, wall_y, wall_z = 0.0, 1.0, 0.5
 			wall_orn = [0, 0, 0, 1]
-			self.tgt_pos = [wall_x, wall_y, wall_z]
+			
+			tgt_r = self.rng.uniform(0.0, 0.2)
+			tgt_a = self.rng.uniform(0, 2 * np.pi)
+			tgt_local = [tgt_r * np.cos(tgt_a), 0, tgt_r * np.sin(tgt_a)]
+			self.tgt_pos = [wall_x + tgt_local[0], 
+							wall_y + tgt_local[1], 
+							wall_z + tgt_local[2]]
 		
 		self.wall = p.createMultiBody(baseMass=0, baseCollisionShapeIndex=wc,
 									 baseVisualShapeIndex=wv,
@@ -226,11 +234,11 @@ class ArmEnv:
 		return [self.rng.uniform(*x_rng), self.rng.uniform(*y_rng), z]
 	
 	def _rand_orn(self):
-		if self.rng.random() < 0.5:
-			return [0, 0, 0, 1]
-		else:
+		if self.hard and self.rng.random() < 0.5:
 			axis_angle = self.rng.uniform(0, 2 * np.pi)
 			return p.getQuaternionFromEuler([np.pi/2, 0, axis_angle])
+		else:
+			return [0, 0, 0, 1]
 	
 	def _get_orn_type(self, orn):
 		mat = np.array(p.getMatrixFromQuaternion(orn)).reshape(3, 3)
@@ -275,8 +283,12 @@ class ArmEnv:
 			else:
 				return self.ROD_L / 2
 		
-		pos_a = self._rand_pos((-0.4, 0.4), (0.2, 0.4), get_pos_z(orn_a)) if self.randomize else [0.4, 0.2, get_pos_z(orn_a)]
-		pos_b = self._rand_pos((-0.4, 0.4), (0.2, 0.4), get_pos_z(orn_b)) if self.randomize else [-0.4, 0.2, get_pos_z(orn_b)]
+		if self.randomize:
+			pos_a = [self.rng.uniform(0.1, 0.4), self.rng.uniform(0.2, 0.4), get_pos_z(orn_a)]
+			pos_b = [self.rng.uniform(-0.4, -0.1), self.rng.uniform(0.2, 0.4), get_pos_z(orn_b)]
+		else:
+			pos_a = [0.4, 0.2, get_pos_z(orn_a)]
+			pos_b = [-0.4, 0.2, get_pos_z(orn_b)]
 		
 		self.rod_a = self._create_rod([1, 0, 0, 1], pos_a, orn=orn_a)
 		self.rod_b = self._create_rod([0, 0, 1, 1], pos_b, orn=orn_b)
@@ -307,13 +319,14 @@ class ArmEnv:
 		
 		end_pos, end_orn = p.getLinkState(self.arm, self.END_IDX)[:2]
 		
-		if self.conn and self.comb:
-			return np.array(joint_pos + joint_vel + list(end_pos) + list(end_orn) +
-						  self._get_rod_state(self.comb) + list(self.tgt_pos))
+		conn_state = [1.0] if self.conn else [0.0]
 		
-		return np.array(joint_pos + joint_vel + list(end_pos) + list(end_orn) +
-					   self._get_rod_state(self.rod_a) + self._get_rod_state(self.rod_b) +
-					   list(self.tgt_pos))
+		rod_a_state = self._get_rod_state(self.rod_a)
+		rod_b_state = self._get_rod_state(self.rod_b)
+		rod_c_state = self._get_rod_state(self.comb)
+		
+		return np.array(conn_state + joint_pos + joint_vel + list(end_pos) + list(end_orn) +
+					   rod_a_state + rod_b_state + rod_c_state + list(self.tgt_pos))
 	
 	def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, Dict]:
 		cur_pos, cur_orn = p.getLinkState(self.arm, self.END_IDX)[:2]
@@ -592,8 +605,8 @@ class ArmEnv:
 		p.disconnect()
 
 
-def test_env(show_bnd=False, randomize=False, debug=False):
-	env = ArmEnv(render=True, verbose=False, debug=debug, show_bnd=show_bnd, randomize=randomize)
+def test_env(show_bnd=False, randomize=False, debug=False, hard=False):
+	env = ArmEnv(render=True, verbose=False, debug=debug, show_bnd=show_bnd, randomize=randomize, hard=hard)
 	current_view = 'front'
 	
 	print("\nEnvironment initialized!")
@@ -707,14 +720,15 @@ def test_env(show_bnd=False, randomize=False, debug=False):
 if __name__ == "__main__":
 	import argparse
 	
-	parser = argparse.ArgumentParser(description='PRML项目 - ArmEnv测试环境')
-	parser.add_argument('-b', '--show-boundary', action='store_true', help='显示边界标记')
-	parser.add_argument('-r', '--randomize', action='store_true', help='随机化初始位置')
-	parser.add_argument('-d', '--debug', action='store_true', help='显示调试信息')
+	parser = argparse.ArgumentParser(description='PRML Project - ArmEnv Test Environment')
+	parser.add_argument('-b', '--show-boundary', action='store_true', help='Show boundary markers')
+	parser.add_argument('-r', '--randomize', action='store_true', help='Randomize initial positions')
+	parser.add_argument('--hard', action='store_true', help='Enable hard mode (rods may be flat)')
+	parser.add_argument('-d', '--debug', action='store_true', help='Show debug information')
 	
 	args = parser.parse_args()
 	
-	test_env(show_bnd=args.show_boundary, randomize=args.randomize, debug=args.debug)
+	test_env(show_bnd=args.show_boundary, randomize=args.randomize, hard=args.hard, debug=args.debug)
 
 
 	

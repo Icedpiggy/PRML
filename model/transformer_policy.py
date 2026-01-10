@@ -5,7 +5,7 @@ from typing import Optional, Tuple
 
 
 class PositionalEncoding(nn.Module):
-	def __init__(self, d_model, max_len=5000):
+	def __init__(self, d_model, max_len=10000):
 		super(PositionalEncoding, self).__init__()
 		
 		pe = torch.zeros(max_len, d_model)
@@ -26,7 +26,7 @@ class TransformerPolicy(nn.Module):
 	
 	def __init__(self, obs_dim: int, action_dim: int, d_model: int = 128, 
 				 nhead: int = 8, num_layers: int = 4, dim_feedforward: int = 512, 
-				 dropout: float = 0.1, max_seq_len: int = 1000):
+				 dropout: float = 0.1, max_seq_len: int = 10000):
 		super(TransformerPolicy, self).__init__()
 		
 		self.obs_dim = obs_dim
@@ -78,6 +78,7 @@ class TransformerPolicy(nn.Module):
 		return mask
 	
 	def predict_single_action(self, obs_history: torch.Tensor) -> torch.Tensor:
+		was_training = self.training
 		self.eval()
 		with torch.no_grad():
 			if obs_history.dim() == 2:
@@ -86,4 +87,6 @@ class TransformerPolicy(nn.Module):
 			action_seq = self.forward(obs_history)
 			action = action_seq[0, -1, :]
 		
+		if was_training:
+			self.train()
 		return action
