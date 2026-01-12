@@ -8,7 +8,7 @@ from envs import ArmEnv
 class DataCollector:
 	BASE_DIR = 'data'
 	MIN_STEPS = 10
-	MAX_STEPS = 10000
+	MAX_STEPS = 5000
 	POS_SPEED = 0.5
 	ROT_SPEED = 0.5
 	
