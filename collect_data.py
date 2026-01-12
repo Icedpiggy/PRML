@@ -145,8 +145,8 @@ class DataCollector:
 		view = 'front'
 		
 		while step < self.MAX_STEPS:
-			action = self._get_action_from_keyboard()
 			obs = self.env.get_obs()
+			action = self._get_action_from_keyboard()
 			done, info = self.env.step(action)
 			
 			traj['observations'].append(obs)
