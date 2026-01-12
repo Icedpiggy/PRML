@@ -100,13 +100,12 @@ class DataCollector:
 				return view
 		return current_view
 	
-	def _print_progress(self, step, reward, total_reward, info):
+	def _print_progress(self, step, info):
 		if step % 100 == 0:
 			st = f"conn:{info['conn']} hit:{info['hit']}"
-			print(f"\rsteps: {step:4d}, [{st}], reward: {reward:6.2f}, "
-				  f"total: {total_reward:8.2f}", end="")
+			print(f"\rsteps: {step:4d}, [{st}]", end="")
 	
-	def _print_result(self, success, step, traj, info):
+	def _print_result(self, success, step, info):
 		print(f"\n{'='*60}")
 		if success:
 			print(f"Trajectory completed successfully!")
@@ -115,7 +114,6 @@ class DataCollector:
 			reason = 'Boundary violation' if info['bnd_vio'] else 'Unknown'
 			print(f"  Reason: {reason}")
 		print(f"  Steps: {step}")
-		print(f"  Total reward: {sum(traj['rewards']):.2f}")
 		print(f"  Connected: {info['conn']}")
 		print(f"  Hit target: {info['hit']}")
 	
@@ -142,24 +140,24 @@ class DataCollector:
 		print("=" * 60)
 	
 	def _collect_loop(self, traj_id):
-		traj = {'observations': [], 'actions': [], 'rewards': [], 'info': []}
+		traj = {'observations': [], 'actions': [], 'info': []}
 		step = 0
 		view = 'front'
 		
 		while step < self.MAX_STEPS:
 			action = self._get_action_from_keyboard()
-			obs, reward, done, info = self.env.step(action)
+			obs = self.env.get_obs()
+			done, info = self.env.step(action)
 			
 			traj['observations'].append(obs)
 			traj['actions'].append(action)
-			traj['rewards'].append(reward)
 			traj['info'].append(info)
 			
-			self._print_progress(step, reward, sum(traj['rewards']), info)
+			self._print_progress(step, info)
 			step += 1
 			
 			if done:
-				self._print_result(info['hit'], step, traj, info)
+				self._print_result(info['hit'], step, info)
 				return traj if info['hit'] else None
 			
 			keys = p.getKeyboardEvents()
@@ -212,13 +210,17 @@ class DataCollector:
 	def _save_traj(self, traj, traj_id):
 		fn = os.path.join(self.save_dir, f'trajectory_{traj_id:03d}.pkl')
 		
+		scene_info = {
+			'wall_pos': list(self.env.wall_pos) if hasattr(self.env, 'wall_pos') else [0.0, 1.0, 0.5],
+			'wall_orn': list(self.env.wall_orn) if hasattr(self.env, 'wall_orn') else [0, 0, 0, 1]
+		}
+		
 		traj['metadata'] = {
 			'traj_id': traj_id,
 			'length': len(traj['observations']),
-			'total_reward': sum(traj['rewards']),
-			'mean_reward': np.mean(traj['rewards']),
 			'final_connected': traj['info'][-1]['conn'] if traj['info'] else False,
-			'final_hit': traj['info'][-1]['hit'] if traj['info'] else False
+			'final_hit': traj['info'][-1]['hit'] if traj['info'] else False,
+			'scene_info': scene_info
 		}
 		
 		with open(fn, 'wb') as f:
@@ -227,8 +229,6 @@ class DataCollector:
 		md = traj['metadata']
 		print(f"✓ Trajectory saved: {fn}")
 		print(f"  Length: {md['length']} steps")
-		print(f"  Total reward: {md['total_reward']:.2f}")
-		print(f"  Mean reward: {md['mean_reward']:.2f}")
 		print(f"  Connected: {md['final_connected']}")
 		print(f"  Hit target: {md['final_hit']}")
 	

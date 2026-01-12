@@ -66,12 +66,13 @@ class ArmEnv:
 		self.arm = None
 		self.rod_a = self.rod_b = self.comb = None
 		self.wall = None
+		self.wall_pos = None
+		self.wall_orn = None
 		self.tgt_id = None
 		self.tgt_pos = None
 		self.bnd_markers = []
 		self.conn = False
 		self.gripper_closed = False
-		self.conn_reward_given = False
 		self.gripper_helpers = {}
 		self.rod_helpers = {}
 		
@@ -170,6 +171,7 @@ class ArmEnv:
 			wall_x, wall_y, wall_z = self.rng.uniform(-0.3, 0.3), self.rng.uniform(0.9, 1.0), 0.5
 			wall_angle = self.rng.uniform(-np.pi/6, np.pi/6)
 			wall_orn = p.getQuaternionFromEuler([0, 0, wall_angle])
+			self.wall_orn = wall_orn
 			
 			tgt_r = self.rng.uniform(0.0, 0.2)
 			tgt_a = self.rng.uniform(0, 2 * np.pi)
@@ -180,6 +182,7 @@ class ArmEnv:
 		else:
 			wall_x, wall_y, wall_z = 0.0, 1.0, 0.5
 			wall_orn = [0, 0, 0, 1]
+			self.wall_orn = wall_orn
 			
 			tgt_r = self.rng.uniform(0.0, 0.2)
 			tgt_a = self.rng.uniform(0, 2 * np.pi)
@@ -192,6 +195,7 @@ class ArmEnv:
 									 baseVisualShapeIndex=wv,
 									 basePosition=[wall_x, wall_y, wall_z],
 									 baseOrientation=wall_orn)
+		self.wall_pos = [wall_x, wall_y, wall_z]
 		
 		tv = p.createVisualShape(p.GEOM_SPHERE, radius=self.TGT_TH, rgbaColor=[1, 1, 0, 1])
 		self.tgt_id = p.createMultiBody(baseMass=0, baseVisualShapeIndex=tv, basePosition=self.tgt_pos)
@@ -262,7 +266,6 @@ class ArmEnv:
 		
 		self.conn = False
 		self.gripper_closed = False
-		self.conn_reward_given = False
 		
 		for i in range(self.NUM_ARM_JOINTS):
 			p.resetJointState(self.arm, i, self.INIT_JOINTS[i], 0)
@@ -327,7 +330,7 @@ class ArmEnv:
 		return np.array(conn_state + joint_pos + joint_vel + list(end_pos) + list(end_orn) +
 					   rod_a_state + rod_b_state + rod_c_state + list(self.tgt_pos))
 	
-	def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, Dict]:
+	def step(self, action: np.ndarray) -> Tuple[bool, Dict]:
 		cur_pos, cur_orn = p.getLinkState(self.arm, self.END_IDX)[:2]
 		
 		pos_delta = np.clip(action[:3], -self.MAX_POS_STEP, self.MAX_POS_STEP)
@@ -373,38 +376,7 @@ class ArmEnv:
 			'bnd_vio': self._check_bnd_vio()
 		}
 		
-		return (self.get_obs(), self._calc_reward(), self._is_done(), info)
-	
-	def _calc_reward(self) -> float:
-		r = 0.0
-		
-		if self.conn and self.comb:
-			ends = self._get_ends(self.comb, self.COMB_L)
-			r += 1.0 - min(np.linalg.norm(e - np.array(self.tgt_pos)) for e in ends)
-		else:
-			if self.rod_a is None or self.rod_b is None:
-				return r - 0.1
-			
-			pos_a, pos_b = p.getBasePositionAndOrientation(self.rod_a)[0], p.getBasePositionAndOrientation(self.rod_b)[0]
-			avg = (np.array(pos_a) + np.array(pos_b)) / 2
-			r += 1.0 - np.linalg.norm(avg - np.array(self.tgt_pos)) * 2
-			
-			ends_a, ends_b = self._get_ends(self.rod_a), self._get_ends(self.rod_b)
-			end_d = min(np.linalg.norm(pa - pb) for pa in ends_a for pb in ends_b)
-			ctr_d = np.linalg.norm(np.array(pos_a) - np.array(pos_b))
-			
-			if end_d < self.END_TH * 10:
-				r += (1.0 - end_d / (self.END_TH * 10)) * 5
-			if abs(ctr_d - self.ROD_L) < 0.05:
-				r += (1.0 - abs(ctr_d - self.ROD_L) / 0.05) * 5
-		
-		if self.conn and not self.conn_reward_given:
-			r += 10
-			self.conn_reward_given = True
-		if self._check_hit():
-			r += 50
-		
-		return r - 0.1
+		return (self._is_done(), info)
 	
 	def _check_conn(self) -> bool:
 		if self.conn:
@@ -684,7 +656,7 @@ def test_env(show_bnd=False, randomize=False, debug=False, hard=False):
 							current_view = 'side'
 							env.set_camera_view(current_view)
 			
-			obs, reward, done, info = env.step(action)
+			done, info = env.step(action)
 			step += 1
 			
 			if (step + 1) % 100 == 0:
@@ -693,20 +665,20 @@ def test_env(show_bnd=False, randomize=False, debug=False, hard=False):
 				if env.conn and env.comb:
 					ends = env._get_ends(env.comb, env.COMB_L)
 					d = min(np.linalg.norm(e - np.array(env.tgt_pos)) for e in ends)
-					print(f"{step + 1:4d}: [{st}] end_tgt_dist:{d:.3f}m reward:{reward:.2f}")
+					print(f"{step + 1:4d}: [{st}] end_tgt_dist:{d:.3f}m")
 				else:
 					if env.rod_a is not None and env.rod_b is not None:
 						ends_a, ends_b = env._get_ends(env.rod_a), env._get_ends(env.rod_b)
 						end_d = min(np.linalg.norm(pa - pb) for pa in ends_a for pb in ends_b)
 						pos_a, pos_b = p.getBasePositionAndOrientation(env.rod_a)[0], p.getBasePositionAndOrientation(env.rod_b)[0]
 						ctr_d = np.linalg.norm(np.array(pos_a) - np.array(pos_b))
-						print(f"{step + 1:4d}: [{st}] end_dist:{end_d:.3f}m ctr_dist:{ctr_d:.3f}m reward:{reward:.2f}")
+						print(f"{step + 1:4d}: [{st}] end_dist:{end_d:.3f}m ctr_dist:{ctr_d:.3f}m")
 					else:
-						print(f"{step + 1:4d}: [{st}] rods merged or unavailable reward:{reward:.2f}")
+						print(f"{step + 1:4d}: [{st}] rods merged or unavailable")
 			
 			if done:
 				msg = "Boundary violation" if info['bnd_vio'] else "Task complete"
-				print(f"\n{msg}! steps:{step + 1} reward:{reward:.2f}")
+				print(f"\n{msg}! steps:{step + 1}")
 				break
 	
 	except KeyboardInterrupt:
@@ -728,6 +700,3 @@ if __name__ == "__main__":
 	args = parser.parse_args()
 	
 	test_env(show_bnd=args.show_boundary, randomize=args.randomize, hard=args.hard, debug=args.debug)
-
-
-	

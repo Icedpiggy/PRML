@@ -43,7 +43,6 @@ class SimpleRodEnv:
 		self.tgt_id = None
 		self.tgt_pos = None
 		self.conn = False
-		self.conn_reward_given = False
 		
 		if self.show_bnd:
 			self._create_bnd_marker()
@@ -139,7 +138,6 @@ class SimpleRodEnv:
 			p.removeBody(self.comb)
 			self.comb = None
 		self.conn = False
-		self.conn_reward_given = False
 		
 		if self.rod_a is not None:
 			p.removeBody(self.rod_a)
@@ -193,7 +191,7 @@ class SimpleRodEnv:
 		return np.array(list(pos_a) + list(orn_a) + list(vel_a) + list(ang_a) +
 						list(pos_b) + list(orn_b) + list(vel_b) + list(ang_b) + list(self.tgt_pos))
 	
-	def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, Dict]:
+	def step(self, action: np.ndarray) -> Tuple[bool, Dict]:
 		if self.conn and self.comb:
 			force = [sum(action[i::3]) * 10 for i in range(3)]
 			p.applyExternalForce(self.comb, -1, force, [0, 0, 0], p.WORLD_FRAME)
@@ -206,38 +204,8 @@ class SimpleRodEnv:
 		if self.render:
 			time.sleep(1./60.)
 		
-		return (self.get_obs(), self._calc_reward(), self._is_done(),
+		return (self._is_done(),
 				{'conn': self._check_conn(), 'hit': self._check_hit(), 'bnd_vio': self._check_bnd_vio()})
-	
-	def _calc_reward(self) -> float:
-		r = 0.0
-		
-		if self.conn and self.comb:
-			ends = self._get_ends(self.comb, self.COMB_L)
-			tgt = np.array(self.tgt_pos)
-			r += 1.0 - min(np.linalg.norm(e - tgt) for e in ends)
-		else:
-			pos_a, pos_b = p.getBasePositionAndOrientation(self.rod_a)[0], p.getBasePositionAndOrientation(self.rod_b)[0]
-			avg = (np.array(pos_a) + np.array(pos_b)) / 2
-			d = np.linalg.norm(avg - np.array(self.tgt_pos))
-			r += 1.0 - d * 2
-			
-			ends_a, ends_b = self._get_ends(self.rod_a), self._get_ends(self.rod_b)
-			end_d = min(np.linalg.norm(pa - pb) for pa in ends_a for pb in ends_b)
-			ctr_d = np.linalg.norm(np.array(pos_a) - np.array(pos_b))
-			
-			if end_d < self.END_TH * 10:
-				r += (1.0 - end_d / (self.END_TH * 10)) * 5
-			if abs(ctr_d - self.ROD_L) < 0.05:
-				r += (1.0 - abs(ctr_d - self.ROD_L) / 0.05) * 5
-		
-		if self.conn and not self.conn_reward_given:
-			r += 10
-			self.conn_reward_given = True
-		if self._check_hit():
-			r += 50
-		
-		return r - 0.1
 	
 	def _check_conn(self) -> bool:
 		if self.conn:
@@ -311,7 +279,7 @@ def test_env(show_bnd=False, randomize=False, hard=False):
 	print("Start simulation...")
 	
 	while True:
-		obs, reward, done, info = env.step(np.zeros(6))
+		done, info = env.step(np.zeros(6))
 		
 		if (step + 1) % 100 == 0:
 			st = f"conn:{info['conn']} hit:{info['hit']}"
@@ -320,17 +288,17 @@ def test_env(show_bnd=False, randomize=False, hard=False):
 				ends = env._get_ends(env.comb, env.COMB_L)
 				tgt = np.array(env.tgt_pos)
 				d = min(np.linalg.norm(e - tgt) for e in ends)
-				print(f"{step + 1:4d}: [{st}] end_tgt_dist:{d:.3f}m reward:{reward:.2f}")
+				print(f"{step + 1:4d}: [{st}] end_tgt_dist:{d:.3f}m")
 			else:
 				ends_a, ends_b = env._get_ends(env.rod_a), env._get_ends(env.rod_b)
 				end_d = min(np.linalg.norm(pa - pb) for pa in ends_a for pb in ends_b)
 				pos_a, pos_b = p.getBasePositionAndOrientation(env.rod_a)[0], p.getBasePositionAndOrientation(env.rod_b)[0]
 				ctr_d = np.linalg.norm(np.array(pos_a) - np.array(pos_b))
-				print(f"{step + 1:4d}: [{st}] end_dist:{end_d:.3f}m ctr_dist:{ctr_d:.3f}m reward:{reward:.2f}")
+				print(f"{step + 1:4d}: [{st}] end_dist:{end_d:.3f}m ctr_dist:{ctr_d:.3f}m")
 		
 		if done:
 			msg = "Boundary violation" if info['bnd_vio'] else "Task complete"
-			print(f"\n{msg}! steps:{step + 1} reward:{reward:.2f}")
+			print(f"\n{msg}! steps:{step + 1}")
 			break
 		step += 1
 	
