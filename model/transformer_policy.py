@@ -26,13 +26,14 @@ class TransformerPolicy(nn.Module):
 	
 	def __init__(self, obs_dim: int, action_dim: int, d_model: int = 128, 
 				 nhead: int = 8, num_layers: int = 4, dim_feedforward: int = 512, 
-				 dropout: float = 0.1, max_seq_len: int = 10000):
+				 dropout: float = 0.1, max_seq_len: int = 10000, num_classes: int = 3):
 		super(TransformerPolicy, self).__init__()
 		
 		self.obs_dim = obs_dim
 		self.action_dim = action_dim
 		self.d_model = d_model
 		self.max_seq_len = max_seq_len
+		self.num_classes = num_classes  # Number of discrete actions per dimension
 		
 		self.obs_embedding = nn.Linear(obs_dim, d_model)
 		self.pos_encoder = PositionalEncoding(d_model, max_len=max_seq_len)
@@ -49,7 +50,9 @@ class TransformerPolicy(nn.Module):
 			num_layers=num_layers
 		)
 		
-		self.action_head = nn.Linear(d_model, action_dim)
+		# Output: (batch, seq_len, action_dim * num_classes)
+		# We'll reshape to (batch, seq_len, action_dim, num_classes) for softmax
+		self.action_head = nn.Linear(d_model, action_dim * num_classes)
 		
 		self._init_weights()
 	
@@ -69,24 +72,30 @@ class TransformerPolicy(nn.Module):
 			causal_mask = self._generate_causal_mask(seq_len, obs_seq.device)
 		
 		x = self.transformer_encoder(x, mask=causal_mask)
-		actions = self.action_head(x)
 		
-		return actions
+		# Output logits for each action dimension and class
+		logits = self.action_head(x)  # (batch, seq_len, action_dim * num_classes)
+		
+		# Reshape to (batch, seq_len, action_dim, num_classes)
+		logits = logits.view(batch_size, seq_len, self.action_dim, self.num_classes)
+		
+		return logits
 	
 	def _generate_causal_mask(self, seq_len: int, device: torch.device) -> torch.Tensor:
 		mask = torch.triu(torch.ones(seq_len, seq_len, device=device, dtype=torch.bool), diagonal=1)
 		return mask
 	
-	def predict_single_action(self, obs_history: torch.Tensor) -> torch.Tensor:
+	def predict_action_classes(self, obs_history: torch.Tensor) -> torch.Tensor:
+		"""Predict action class indices for single action"""
 		was_training = self.training
 		self.eval()
 		with torch.no_grad():
 			if obs_history.dim() == 2:
 				obs_history = obs_history.unsqueeze(0)
 			
-			action_seq = self.forward(obs_history)
-			action = action_seq[0, -1, :]
+			logits = self.forward(obs_history)
+			class_indices = torch.argmax(logits[0, -1, :, :], dim=-1)  # (action_dim,)
 		
 		if was_training:
 			self.train()
-		return action
+		return class_indices

@@ -14,19 +14,13 @@ from model import TransformerPolicy
 
 class TrajectoryDataset(Dataset):
 	
-	def __init__(self, data_dir, max_seq_len=None, pad=True, normalize_actions=True,
-				 normalize_observations=True,
-				 action_mean=None, action_std=None,
-				 obs_mean=None, obs_std=None):
+	def __init__(self, data_dir, max_seq_len=None, pad=True, normalize_observations=True, obs_mean=None, obs_std=None):
 
 		self.data_dir = data_dir
 		self.trajectories = []
 		self.max_seq_len = max_seq_len
 		self.pad = pad
-		self.normalize_actions = normalize_actions
 		self.normalize_observations = normalize_observations
-		self.action_mean = action_mean
-		self.action_std = action_std
 		self.obs_mean = obs_mean
 		self.obs_std = obs_std
 		self.max_obs_dim = None
@@ -44,14 +38,6 @@ class TrajectoryDataset(Dataset):
 				print(f"\nUsing provided observation normalization statistics:")
 				print(f"  Mean shape: {self.obs_mean.shape}")
 				print(f"  Std shape: {self.obs_std.shape}")
-		
-		if self.normalize_actions:
-			if self.action_mean is None or self.action_std is None:
-				self._compute_action_stats()
-			else:
-				print(f"\nUsing provided action normalization statistics:")
-				print(f"  Mean: {self.action_mean.flatten()}")
-				print(f"  Std: {self.action_std.flatten()}")
 		
 		self._preprocess_data()
 		self._analyze_data()
@@ -95,17 +81,7 @@ class TrajectoryDataset(Dataset):
 		print(f"  Mean range: [{self.obs_mean.min():.4f}, {self.obs_mean.max():.4f}]")
 		print(f"  Std range: [{self.obs_std.min():.4f}, {self.obs_std.max():.4f}]")
 	
-	def _compute_action_stats(self):
-		all_actions = np.concatenate([np.array(t['actions']) for t in self.trajectories], axis=0)
-		self.action_mean = np.mean(all_actions, axis=0, keepdims=True).astype(np.float32)
-		self.action_std = np.std(all_actions, axis=0, keepdims=True).astype(np.float32)
-		self.action_std = np.where(self.action_std < 1e-6, 1.0, self.action_std)
-		print(f"\nAction normalization:")
-		print(f"  Mean: {self.action_mean.flatten()}")
-		print(f"  Std: {self.action_std.flatten()}")
-	
 	def _preprocess_data(self):
-		"""Preprocess trajectories: normalize observations and actions, pad/truncate sequences."""
 		if not self.trajectories:
 			return
 		
@@ -114,30 +90,27 @@ class TrajectoryDataset(Dataset):
 			obs_seq = traj['observations'].copy()
 			action_seq = traj['actions'].copy()
 			
-			# Normalize observations
 			if self.normalize_observations:
 				obs_seq = (obs_seq.astype(np.float32) - 
 						  self.obs_mean.astype(np.float32)) / self.obs_std.astype(np.float32)
 			
-			# Normalize actions
-			if self.normalize_actions:
-				action_seq = (action_seq.astype(np.float32) - 
-							self.action_mean.astype(np.float32)) / self.action_std.astype(np.float32)
+			eps = 1e-6
+			action_classes = np.where(action_seq > eps, 2, np.where(action_seq < -eps, 0, 1))
 			
 			if self.pad and self.max_seq_len:
 				seq_len = len(obs_seq)
 				if seq_len < self.max_seq_len:
 					pad_len = self.max_seq_len - seq_len
 					obs_seq = np.pad(obs_seq, ((0, pad_len), (0, 0)), mode='constant', constant_values=0)
-					action_seq = np.pad(action_seq, ((0, pad_len), (0, 0)), mode='constant', constant_values=0)
+					action_classes = np.pad(action_classes, ((0, pad_len), (0, 0)), mode='constant', constant_values=-1)
 				elif seq_len > self.max_seq_len:
 					obs_seq = obs_seq[:self.max_seq_len]
-					action_seq = action_seq[:self.max_seq_len]
+					action_classes = action_classes[:self.max_seq_len]
 			
 			processed_trajectories.append({
 				'observations': obs_seq,
-				'actions': action_seq,
-				'seq_len': len(traj['observations'])
+				'actions': action_classes,
+				'seq_len': traj['length']
 			})
 		
 		self.trajectories = processed_trajectories
@@ -190,20 +163,24 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch, total_ep
 	
 	for batch_idx, batch in enumerate(pbar):
 		obs_seq = batch['observations'].to(device)
-		action_seq = batch['actions'].to(device)
+		action_classes = batch['actions'].to(device)
 		seq_lens = batch['seq_lens'].to(device)
 		
-		pred_actions = model(obs_seq)
+		logits = model(obs_seq)
 		
-		# Vectorized mask creation
-		batch_size, seq_len, action_dim = pred_actions.shape
+		batch_size, seq_len = action_classes.shape[:2]
 		positions = torch.arange(seq_len, device=device).unsqueeze(0).expand(batch_size, -1)
-		mask = (positions < seq_lens.unsqueeze(1)).unsqueeze(-1).float()
+		mask = positions < seq_lens.unsqueeze(1)
 		
-		masked_pred = pred_actions * mask
-		masked_target = action_seq * mask
+		logits_flat = logits.view(batch_size * seq_len, -1)
+		action_classes_flat = action_classes.view(-1)
+		mask_flat = mask.view(-1)
 		
-		loss = criterion(masked_pred, masked_target)
+		loss = criterion(logits_flat, action_classes_flat)
+		
+		ignore_index = -100
+		weights = torch.where(mask_flat, torch.ones_like(mask_flat.float()), torch.zeros_like(mask_flat.float()))
+		loss = (loss * weights).sum() / (weights.sum() + 1e-8)
 		
 		optimizer.zero_grad()
 		loss.backward()
@@ -228,19 +205,23 @@ def validate(model, dataloader, criterion, device):
 	with torch.no_grad():
 		for batch in dataloader:
 			obs_seq = batch['observations'].to(device)
-			action_seq = batch['actions'].to(device)
+			action_classes = batch['actions'].to(device)
 			seq_lens = batch['seq_lens'].to(device)
 			
-			pred_actions = model(obs_seq)
+			logits = model(obs_seq)
 			
-			batch_size, seq_len, action_dim = pred_actions.shape
+			batch_size, seq_len = action_classes.shape[:2]
 			positions = torch.arange(seq_len, device=device).unsqueeze(0).expand(batch_size, -1)
-			mask = (positions < seq_lens.unsqueeze(1)).unsqueeze(-1).float()
+			mask = positions < seq_lens.unsqueeze(1)
 			
-			masked_pred = pred_actions * mask
-			masked_target = action_seq * mask
+			logits_flat = logits.view(batch_size * seq_len, -1)
+			action_classes_flat = action_classes.view(-1)
+			mask_flat = mask.view(-1)
 			
-			loss = criterion(masked_pred, masked_target)
+			loss = criterion(logits_flat, action_classes_flat)
+			
+			weights = torch.where(mask_flat, torch.ones_like(mask_flat.float()), torch.zeros_like(mask_flat.float()))
+			loss = (loss * weights).sum() / (weights.sum() + 1e-8)
 			
 			total_loss += loss.item()
 	
@@ -255,7 +236,7 @@ def plot_training_curves(train_losses, val_losses, save_path):
 	ax.plot(train_losses, label='Train Loss', linewidth=2)
 	ax.plot(val_losses, label='Val Loss', linewidth=2)
 	ax.set_xlabel('Epoch', fontsize=12)
-	ax.set_ylabel('Loss (MSE)', fontsize=12)
+	ax.set_ylabel('Loss (Cross-Entropy)', fontsize=12)
 	ax.set_title('Training and Validation Loss', fontsize=14, fontweight='bold')
 	ax.legend(fontsize=11)
 	ax.grid(True, alpha=0.3)
@@ -304,6 +285,10 @@ def main():
 					   help='Early stopping patience (number of epochs without improvement)')
 	parser.add_argument('--early-stopping-delta', type=float, default=1e-6,
 					   help='Minimum change to qualify as an improvement (default: 1e-6)')
+	parser.add_argument('--pos-speed', type=float, default=0.5,
+					   help='Position speed for discrete actions (default: 0.5)')
+	parser.add_argument('--rot-speed', type=float, default=0.5,
+					   help='Rotation speed for discrete actions (default: 0.5)')
 	
 	args = parser.parse_args()
 	
@@ -344,7 +329,8 @@ def main():
 		train_dir, 
 		pad=not args.no_pad,
 		normalize_observations=True,
-		normalize_actions=True
+		obs_mean=None,
+		obs_std=None
 	)
 	
 	print(f"\nLoading validation data from: {val_dir}")
@@ -352,11 +338,8 @@ def main():
 		val_dir, 
 		pad=not args.no_pad,
 		normalize_observations=True,
-		normalize_actions=True,
 		obs_mean=train_dataset.obs_mean,
-		obs_std=train_dataset.obs_std,
-		action_mean=train_dataset.action_mean,
-		action_std=train_dataset.action_std
+		obs_std=train_dataset.obs_std
 	)
 	
 	if len(train_dataset) == 0:
@@ -426,7 +409,8 @@ def main():
 	print(f"  Total: {total_params:,}")
 	print(f"  Trainable: {trainable_params:,}")
 	
-	criterion = nn.MSELoss()
+	# Cross-Entropy Loss with ignore_index for padding
+	criterion = nn.CrossEntropyLoss(ignore_index=-100)
 	optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
 	scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
 	
@@ -464,7 +448,6 @@ def main():
 		print(f"  Val Loss: {val_loss:.6f}")
 		print(f"  Learning Rate: {current_lr:.6f}")
 		
-		# Early stopping logic
 		if val_loss < best_val_loss - args.early_stopping_delta:
 			best_val_loss = val_loss
 			best_epoch = epoch
@@ -483,9 +466,7 @@ def main():
 				'action_dim': action_dim,
 				'max_seq_len': max_seq_len,
 				'obs_mean': train_dataset.obs_mean.tolist() if train_dataset.obs_mean is not None else None,
-				'obs_std': train_dataset.obs_std.tolist() if train_dataset.obs_std is not None else None,
-				'action_mean': train_dataset.action_mean.tolist() if train_dataset.action_mean is not None else None,
-				'action_std': train_dataset.action_std.tolist() if train_dataset.action_std is not None else None
+				'obs_std': train_dataset.obs_std.tolist() if train_dataset.obs_std is not None else None
 			}, best_model_path)
 			print(f"  ✓ Best model saved (val_loss: {best_val_loss:.6f})")
 		else:
@@ -513,9 +494,7 @@ def main():
 		'action_dim': action_dim,
 		'max_seq_len': max_seq_len,
 		'obs_mean': train_dataset.obs_mean.tolist() if train_dataset.obs_mean is not None else None,
-		'obs_std': train_dataset.obs_std.tolist() if train_dataset.obs_std is not None else None,
-		'action_mean': train_dataset.action_mean.tolist() if train_dataset.action_mean is not None else None,
-		'action_std': train_dataset.action_std.tolist() if train_dataset.action_std is not None else None
+		'obs_std': train_dataset.obs_std.tolist() if train_dataset.obs_std is not None else None
 	}, final_model_path)
 	print(f"\nFinal model saved: {final_model_path}")
 	
