@@ -1,254 +1,616 @@
-import os
-import argparse
 import numpy as np
 import pickle
-from tqdm import tqdm
-
+import os
+import argparse
+import time
+from typing import Dict, List, Tuple
 from envs import ArmEnv
 
 
 class TrajectoryReplayer:
-	SAVE_DIR = 'data'
+	BASE_DIR = 'data'
 	
-	def __init__(self, render=True, verbose=False, debug=False, show_boundary=False):
-		self.env = ArmEnv(render=render, verbose=verbose, debug=debug, show_bnd=show_boundary)
-		self.save_dir = self.SAVE_DIR
+	# Observation structure constants
+	OBS_CONN_STATE = 1
+	OBS_JOINT_POS = 9
+	OBS_JOINT_VEL = 9
+	OBS_END_POS = 3
+	OBS_END_ORN = 4
+	OBS_ROD_STATE = 13
+	OBS_TGT_POS = 3
+	OBS_TOTAL = 68
 	
-	def list_trajectories(self):
-		if not os.path.exists(self.save_dir):
-			print(f"Data directory '{self.save_dir}' not found")
-			return []
-		
-		files = sorted([f for f in os.listdir(self.save_dir) 
-					   if f.startswith('trajectory_') and f.endswith('.pkl')])
-		
-		if not files:
-			print(f"No trajectory files found in '{self.save_dir}'")
-			return []
-		
-		print(f"\nFound {len(files)} trajectory file(s) in '{self.save_dir}':\n")
-		
-		traj_list = []
-		for fn in files:
-			path = os.path.join(self.save_dir, fn)
-			try:
-				with open(path, 'rb') as f:
-					traj = pickle.load(f)
-				
-				md = traj.get('metadata', {})
-				print(f"  {fn}:")
-				print(f"    Length: {md.get('length', 'N/A')} steps")
-				print(f"    Total reward: {md.get('total_reward', 'N/A'):.2f}" 
-					  if isinstance(md.get('total_reward'), (int, float)) else f"    Total reward: {md.get('total_reward', 'N/A')}")
-				print(f"    Connected: {md.get('final_connected', 'N/A')}")
-				print(f"    Hit target: {md.get('final_hit', 'N/A')}")
-				print()
-				
-				traj_list.append(fn)
-			except Exception as e:
-				print(f"  {fn}: Error reading file - {e}\n")
-		
-		return traj_list
+	# Error thresholds for warnings
+	WARN_END_POS_THRESHOLD = 0.05  # meters
+	WARN_END_ORN_THRESHOLD = 0.05  # quaternion norm
+	WARN_JOINT_THRESHOLD = 0.1  # radians
+	WARN_ROD_THRESHOLD = 0.5  # meters
 	
-	def load_trajectory(self, filename):
-		path = os.path.join(self.save_dir, filename) if not os.path.isabs(filename) else filename
+	def __init__(self, debug=False, show_boundary=False, speed=1.0, render=True):
+		self.env = ArmEnv(render=render, verbose=False, debug=debug, 
+						 randomize=False, show_bnd=show_boundary, hard=False)
+		self.speed = speed
+		self.debug = debug
+		self.render = render
+		print(f"\nTrajectory Replayer initialized")
+		print(f"  Debug mode: {debug}")
+		print(f"  Show boundary: {show_boundary}")
+		print(f"  Playback speed: {speed}x")
+		print(f"  Render mode: {render}")
 		
-		if not os.path.exists(path):
-			print(f"File not found: {path}")
-			return None
+		# Set fixed random seed for deterministic replay
+		np.random.seed(42)
+	
+	def load_trajectory(self, filepath) -> Dict:
+		"""Load trajectory from pickle file"""
+		if not os.path.exists(filepath):
+			raise FileNotFoundError(f"Trajectory file not found: {filepath}")
 		
+		print(f"Loading trajectory from: {filepath}")
+		with open(filepath, 'rb') as f:
+			traj = pickle.load(f)
+		
+		print(f"  Trajectory ID: {traj.get('traj_id', 'N/A')}")
+		print(f"  Length: {traj['length']} steps")
+		print(f"  Number of observations: {len(traj['observations'])}")
+		print(f"  Number of actions: {len(traj['actions'])}")
+		
+		if traj.get('scene_info') is not None:
+			print(f"  Scene info: wall_pos={traj['scene_info'].get('wall_pos')}")
+		
+		return traj
+	
+	def replay(self, traj: Dict, view: str = 'front', compare_with_original: bool = True) -> List[np.ndarray]:
+		"""Replay trajectory with optional comparison to original"""
+		print("\n" + "=" * 60)
+		print("Starting trajectory replay")
+		print("=" * 60)
+		print(f"  View: {view}")
+		print(f"  Speed: {self.speed}x")
+		print(f"  Compare with original: {compare_with_original}")
+		print("  Press ESC to exit early")
+		print("=" * 60)
+		
+		self.env.set_camera_view(view)
+		
+		observations = traj['observations']
+		actions = traj['actions']
+		length = min(len(observations), len(actions))
+		
+		# Load initial state from first observation
+		self._load_initial_state(observations[0], traj.get('scene_info', {}))
+		
+		print(f"\nReplaying {length} steps...")
+		
+		# Store replay observations for comparison
+		replay_observations = []
+		
+		# Print initial real-time comparison header
+		if compare_with_original:
+			print("\nReal-time Error Statistics (updated every 100 steps):")
+			print("-" * 60)
+		
+		step = 0
+		info = None
 		try:
-			with open(path, 'rb') as f:
-				traj = pickle.load(f)
-			
-			print(f"\nSuccessfully loaded: {filename}")
-			md = traj.get('metadata', {})
-			print(f"  Length: {md.get('length', 'N/A')} steps")
-			print(f"  Total reward: {md.get('total_reward', 'N/A'):.2f}" 
-				  if isinstance(md.get('total_reward'), (int, float)) else f"  Total reward: {md.get('total_reward', 'N/A')}")
-			print(f"  Connected: {md.get('final_connected', 'N/A')}")
-			print(f"  Hit target: {md.get('final_hit', 'N/A')}")
-			
-			return traj
-		except Exception as e:
-			print(f"Error loading trajectory: {e}")
-			return None
-	
-	def replay_trajectory(self, traj, slow_down=False, show_info=True):
-		if traj is None:
-			print("No trajectory to replay")
-			return
-		
-		observations = traj.get('observations', [])
-		actions = traj.get('actions', [])
-		rewards = traj.get('rewards', [])
-		infos = traj.get('info', [])
-		
-		if not observations or not actions:
-			print("Invalid trajectory data")
-			return
-		
-		n_steps = len(observations)
-		print(f"\n{'='*60}")
-		print(f"Replaying trajectory ({n_steps} steps)...")
-		print(f"{'='*60}")
-		if show_info:
-			print("\nPress Ctrl+C to stop early")
-		
-		try:
-			for step in tqdm(range(n_steps), desc="Replaying", disable=not show_info):
-				obs, reward, done, info = self.env.step(actions[step])
+			for step in range(length):
+				action = np.array(actions[step])
+				done, info = self.env.step(action)
 				
-				if show_info and (step + 1) % 100 == 0:
-					print(f"\nStep {step + 1}/{n_steps}:")
-					print(f"  Reward: {reward:.2f}")
-					print(f"  Connected: {info['conn']}")
-					print(f"  Hit: {info['hit']}")
+				# Record current observation for comparison
+				current_obs = self.env.get_obs()
+				replay_observations.append(current_obs)
 				
-				if slow_down:
-					import time
-					time.sleep(0.01)
+				# Print real-time comparison every 100 steps
+				if (step + 1) % 100 == 0 and compare_with_original:
+					self._print_realtime_comparison(
+						observations[:len(replay_observations)], 
+						replay_observations, 
+						step + 1,
+						info
+					)
+				
+				if self.render:
+					time.sleep(1./ (self.speed * 60))
 				
 				if done:
-					print(f"\nTrajectory ended early at step {step + 1}")
+					print(f"\n\nTrajectory completed early at step {step + 1}")
+					print(f"  Connected: {info['conn']}")
+					print(f"  Hit target: {info['hit']}")
+					print(f"  Boundary violation: {info['bnd_vio']}")
 					break
 			
-			print(f"\n{'='*60}")
-			print("Replay completed!")
-			if rewards:
-				print(f"Total reward: {sum(rewards):.2f}")
-			if infos:
-				last_info = infos[-1] if infos else {}
-				print(f"Final connected: {last_info.get('conn', False)}")
-				print(f"Final hit: {last_info.get('hit', False)}")
-			print(f"{'='*60}")
+			if step + 1 == length:
+				print(f"\n\nReplay completed successfully!")
+				print(f"  Total steps: {length}")
+				if info:
+					print(f"  Final connected: {info['conn']}")
+					print(f"  Final hit target: {info['hit']}")
+			
+			# Calculate and display comparison with original trajectory
+			if compare_with_original and len(replay_observations) > 0:
+				self._print_comparison(observations[:len(replay_observations)], replay_observations)
 		
 		except KeyboardInterrupt:
-			print(f"\n\nReplay interrupted by user at step {step + 1}")
+			print("\n\nReplay interrupted by user")
+		
+		except Exception as e:
+			print(f"\n\nError during replay: {e}")
+			if self.debug:
+				import traceback
+				traceback.print_exc()
+		
+		return replay_observations
 	
-	def replay_single(self, filename, slow_down=False, show_info=True):
-		traj = self.load_trajectory(filename)
-		if traj:
-			self.replay_trajectory(traj, slow_down=slow_down, show_info=show_info)
+	def _parse_observation_structure(self, obs: np.ndarray) -> Dict[str, np.ndarray]:
+		"""Parse observation into structured dictionary"""
+		return {
+			'conn_state': obs[0:self.OBS_CONN_STATE],
+			'joint_pos': obs[self.OBS_CONN_STATE:self.OBS_CONN_STATE+self.OBS_JOINT_POS],
+			'joint_vel': obs[self.OBS_CONN_STATE+self.OBS_JOINT_POS:self.OBS_CONN_STATE+self.OBS_JOINT_POS+self.OBS_JOINT_VEL],
+			'end_pos': obs[self.OBS_CONN_STATE+self.OBS_JOINT_POS+self.OBS_JOINT_VEL:self.OBS_CONN_STATE+self.OBS_JOINT_POS+self.OBS_JOINT_VEL+self.OBS_END_POS],
+			'end_orn': obs[self.OBS_CONN_STATE+self.OBS_JOINT_POS+self.OBS_JOINT_VEL+self.OBS_END_POS:self.OBS_CONN_STATE+self.OBS_JOINT_POS+self.OBS_JOINT_VEL+self.OBS_END_POS+self.OBS_END_ORN],
+			'rod_a': obs[self.OBS_CONN_STATE+self.OBS_JOINT_POS+self.OBS_JOINT_VEL+self.OBS_END_POS+self.OBS_END_ORN:self.OBS_CONN_STATE+self.OBS_JOINT_POS+self.OBS_JOINT_VEL+self.OBS_END_POS+self.OBS_END_ORN+self.OBS_ROD_STATE],
+			'rod_b': obs[self.OBS_CONN_STATE+self.OBS_JOINT_POS+self.OBS_JOINT_VEL+self.OBS_END_POS+self.OBS_END_ORN+self.OBS_ROD_STATE:self.OBS_CONN_STATE+self.OBS_JOINT_POS+self.OBS_JOINT_VEL+self.OBS_END_POS+self.OBS_END_ORN+2*self.OBS_ROD_STATE],
+			'rod_c': obs[self.OBS_CONN_STATE+self.OBS_JOINT_POS+self.OBS_JOINT_VEL+self.OBS_END_POS+self.OBS_END_ORN+2*self.OBS_ROD_STATE:self.OBS_CONN_STATE+self.OBS_JOINT_POS+self.OBS_JOINT_VEL+self.OBS_END_POS+self.OBS_END_ORN+3*self.OBS_ROD_STATE],
+			'tgt_pos': obs[self.OBS_CONN_STATE+self.OBS_JOINT_POS+self.OBS_JOINT_VEL+self.OBS_END_POS+self.OBS_END_ORN+3*self.OBS_ROD_STATE:]
+		}
 	
-	def replay_all(self, slow_down=False, show_info=False):
-		traj_files = self.list_trajectories()
+	def _print_realtime_comparison(self, original_obs: np.ndarray, replay_obs: List[np.ndarray], 
+								current_step: int, info: Dict) -> None:
+		"""Print real-time comparison at current step"""
+		original_obs = np.array(original_obs)
+		replay_obs = np.array(replay_obs)
 		
-		if not traj_files:
-			return
+		# Calculate absolute differences
+		diff = np.abs(original_obs - replay_obs)
 		
-		print(f"\n{'='*60}")
-		print(f"Replaying {len(traj_files)} trajectory(s)...")
-		print(f"{'='*60}")
+		# Calculate current errors
+		end_pos_error = np.linalg.norm(diff[-1, self.OBS_CONN_STATE+self.OBS_JOINT_POS+self.OBS_JOINT_VEL:self.OBS_CONN_STATE+self.OBS_JOINT_POS+self.OBS_JOINT_VEL+self.OBS_END_POS])
+		end_orn_error = np.linalg.norm(diff[-1, self.OBS_CONN_STATE+self.OBS_JOINT_POS+self.OBS_JOINT_VEL+self.OBS_END_POS:self.OBS_CONN_STATE+self.OBS_JOINT_POS+self.OBS_JOINT_VEL+self.OBS_END_POS+self.OBS_END_ORN])
+		joint_pos_error = np.mean(diff[-1, self.OBS_CONN_STATE:self.OBS_CONN_STATE+self.OBS_JOINT_POS])
 		
-		for i, filename in enumerate(traj_files):
-			print(f"\n[{i+1}/{len(traj_files)}] Loading {filename}...")
-			traj = self.load_trajectory(filename)
-			if traj:
-				self.env.reset()
-				self.replay_trajectory(traj, slow_down=slow_down, show_info=show_info)
+		# Calculate cumulative errors
+		end_pos_cum_error = np.sum(np.linalg.norm(
+			diff[:, self.OBS_CONN_STATE+self.OBS_JOINT_POS+self.OBS_JOINT_VEL:self.OBS_CONN_STATE+self.OBS_JOINT_POS+self.OBS_JOINT_VEL+self.OBS_END_POS], 
+			axis=1
+		))
+		
+		# Get rod error (whichever is active)
+		rod_error = 0.0
+		rod_b_start = self.OBS_CONN_STATE+self.OBS_JOINT_POS+self.OBS_JOINT_VEL+self.OBS_END_POS+self.OBS_END_ORN+2*self.OBS_ROD_STATE
+		rod_a_start = self.OBS_CONN_STATE+self.OBS_JOINT_POS+self.OBS_JOINT_VEL+self.OBS_END_POS+self.OBS_END_ORN+self.OBS_ROD_STATE
+		
+		if np.any(original_obs[-1, rod_b_start:rod_b_start+3] != 0):  # Rod B exists
+			rod_error = np.linalg.norm(diff[-1, rod_b_start:rod_b_start+3])
+		elif np.any(original_obs[-1, rod_a_start:rod_a_start+3] != 0):  # Rod A exists
+			rod_error = np.linalg.norm(diff[-1, rod_a_start:rod_a_start+3])
+		
+		# Add warning markers if errors exceed thresholds
+		warn_pos = "!" if end_pos_error > self.WARN_END_POS_THRESHOLD else ""
+		warn_orn = "!" if end_orn_error > self.WARN_END_ORN_THRESHOLD else ""
+		warn_joint = "!" if joint_pos_error > self.WARN_JOINT_THRESHOLD else ""
+		warn_rod = "!" if rod_error > self.WARN_ROD_THRESHOLD else ""
+		
+		# Print formatted output
+		print(f"\rStep {current_step:4d} | "
+			  f"End-Pos: {end_pos_error:6.3f}m{warn_pos} | "
+			  f"End-Orn: {end_orn_error:6.3f}{warn_orn} | "
+			  f"Joint: {joint_pos_error:6.3f}{warn_joint} | "
+			  f"Rod: {rod_error:6.3f}m{warn_rod} | "
+			  f"Cum: {end_pos_cum_error:8.2f}m | "
+			  f"Conn:{info['conn']} Hit:{info['hit']}", 
+			  end="", flush=True)
+	
+	def _load_initial_state(self, obs, scene_info):
+		"""Load initial state from observation with improved stability"""
+		import pybullet as p
+		
+		# Parse observation based on get_obs() format:
+		# conn_state (1) + joint_pos (9) + joint_vel (9) + end_pos (3) + end_orn (4) +
+		# rod_a_state (13) + rod_b_state (13) + rod_c_state (13) + tgt_pos (3) = 68
+		
+		idx = 0
+		
+		# Connection state (1)
+		conn_state = obs[idx]
+		idx += 1
+		
+		# Joint positions (9: 7 arm + 2 gripper)
+		joint_pos = obs[idx:idx+9]
+		idx += 9
+		
+		# Joint velocities (9: 7 arm + 2 gripper)
+		joint_vel = obs[idx:idx+9]
+		idx += 9
+		
+		# End-effector position (3) and orientation (4)
+		end_pos = obs[idx:idx+3]
+		idx += 3
+		end_orn = obs[idx:idx+4]
+		idx += 4
+		
+		# Rod A state (13: pos 3, orn 4, vel 3, ang_vel 3)
+		rod_a_state = obs[idx:idx+13]
+		idx += 13
+		
+		# Rod B state (13: pos 3, orn 4, vel 3, ang_vel 3)
+		rod_b_state = obs[idx:idx+13]
+		idx += 13
+		
+		# Rod C state (13: pos 3, orn 4, vel 3, ang_vel 3)
+		rod_c_state = obs[idx:idx+13]
+		idx += 13
+		
+		# Target position (3)
+		tgt_pos = obs[idx:idx+3]
+		
+		# Reset environment to initial state
+		self.env.conn = (conn_state == 1.0)
+		
+		NUM_ARM_JOINTS = 7
+		GRIPPER_JOINTS = [9, 10]
+		
+		# Step 1: Reset wall and target first (static objects)
+		self.env.tgt_pos = list(tgt_pos)
+		if self.env.tgt_id:
+			p.resetBasePositionAndOrientation(self.env.tgt_id, tgt_pos, [0, 0, 0, 1])
+		
+		if scene_info and 'wall_pos' in scene_info and self.env.wall:
+			wall_pos = scene_info['wall_pos']
+			wall_orn = scene_info.get('wall_orn', [0, 0, 0, 1])
+			p.resetBasePositionAndOrientation(self.env.wall, wall_pos, wall_orn)
+			self.env.wall_pos = wall_pos
+			self.env.wall_orn = wall_orn
+		
+		# Step 2: Set gripper state before resetting joints
+		gripper_pos = joint_pos[NUM_ARM_JOINTS]
+		self.env.gripper_closed = (gripper_pos < self.env.GRIPPER_CLOSED + 0.01)
+		
+		# Step 3: Reset arm joints with positions and target positions
+		for i in range(NUM_ARM_JOINTS):
+			p.resetJointState(self.env.arm, i, joint_pos[i], joint_vel[i])
+		
+		for gj_idx, gj in enumerate(GRIPPER_JOINTS):
+			p.resetJointState(self.env.arm, gj, joint_pos[NUM_ARM_JOINTS + gj_idx], 0.0)
+		
+		# Step 4: Apply motor controls after resetting all joints
+		for i in range(NUM_ARM_JOINTS):
+			p.setJointMotorControl2(self.env.arm, i, p.POSITION_CONTROL, 
+								   targetPosition=joint_pos[i], 
+								   force=self.env.JOINT_FORCE,
+								   maxVelocity=self.env.JOINT_FORCE)
+		
+		for gj_idx, gj in enumerate(GRIPPER_JOINTS):
+			p.setJointMotorControl2(self.env.arm, gj, p.POSITION_CONTROL,
+								   targetPosition=joint_pos[NUM_ARM_JOINTS + gj_idx], 
+								   force=self.env.GRIPPER_FORCE,
+								   maxVelocity=self.env.GRIPPER_FORCE)
+		
+		# Step 5: Handle rods based on connection state
+		if self.env.conn and rod_c_state[0:3] != [0.0] * 3:
+			# Connected state - set combined rod
+			if self.env.rod_a:
+				p.removeBody(self.env.rod_a)
+			if self.env.rod_b:
+				p.removeBody(self.env.rod_b)
 			
-			print("\n" + "-" * 60)
-	
-	def compare_rewards(self, filename):
-		traj = self.load_trajectory(filename)
-		if traj is None:
-			return
-		
-		actions = traj.get('actions', [])
-		original_rewards = traj.get('rewards', [])
-		
-		if not actions:
-			print("No actions in trajectory")
-			return
-		
-		print(f"\n{'='*60}")
-		print("Comparing original and replay rewards...")
-		print(f"{'='*60}")
-		
-		self.env.reset()
-		replay_rewards = []
-		infos = []
-		
-		for step, action in enumerate(actions):
-			_, reward, done, info = self.env.step(action)
-			replay_rewards.append(reward)
-			infos.append(info)
+			self.env.rod_a = self.env.rod_b = None
 			
-			if done:
-				break
+			if self.env.comb is None:
+				# Create combined rod if it doesn't exist
+				self.env.comb = self.env._create_rod([0.5, 0, 0.5, 1], rod_c_state[0:3], 
+													  length=self.env.COMB_L, 
+													  mass=self.env.COMB_M, 
+													  orn=rod_c_state[3:7])
+			else:
+				p.resetBasePositionAndOrientation(self.env.comb, 
+												 rod_c_state[0:3], 
+												 rod_c_state[3:7])
+				p.resetBaseVelocity(self.env.comb, 
+								   rod_c_state[7:10], 
+								   rod_c_state[10:13])
+			
+			# Set collision filter for combined rod
+			p.setCollisionFilterPair(self.env.arm, self.env.comb, -1, -1, 0)
+		else:
+			# Not connected - set individual rods
+			if self.env.comb:
+				p.removeBody(self.env.comb)
+				self.env.comb = None
+			
+			# Create or reset rod A
+			if self.env.rod_a is None:
+				self.env.rod_a = self.env._create_rod([1, 0, 0, 1], rod_a_state[0:3], 
+													   orn=rod_a_state[3:7])
+			else:
+				p.resetBasePositionAndOrientation(self.env.rod_a, 
+												 rod_a_state[0:3], 
+												 rod_a_state[3:7])
+				p.resetBaseVelocity(self.env.rod_a, 
+								   rod_a_state[7:10], 
+								   rod_a_state[10:13])
+			
+			# Create or reset rod B
+			if self.env.rod_b is None:
+				self.env.rod_b = self.env._create_rod([0, 0, 1, 1], rod_b_state[0:3], 
+													   orn=rod_b_state[3:7])
+			else:
+				p.resetBasePositionAndOrientation(self.env.rod_b, 
+												 rod_b_state[0:3], 
+												 rod_b_state[3:7])
+				p.resetBaseVelocity(self.env.rod_b, 
+								   rod_b_state[7:10], 
+								   rod_b_state[10:13])
+			
+			# Remove collision filters for individual rods (allow collisions)
+			p.setCollisionFilterPair(self.env.arm, self.env.rod_a, -1, -1, 1)
+			p.setCollisionFilterPair(self.env.arm, self.env.rod_b, -1, -1, 1)
 		
-		print(f"\nOriginal trajectory:")
-		print(f"  Steps: {len(original_rewards)}")
-		print(f"  Total reward: {sum(original_rewards):.2f}")
+		# Step 6: Stabilize simulation with multiple steps
+		# Increase stability steps for better state convergence
+		for _ in range(10):
+			p.stepSimulation()
 		
-		print(f"\nReplay:")
-		print(f"  Steps: {len(replay_rewards)}")
-		print(f"  Total reward: {sum(replay_rewards):.2f}")
+		# Step 7: Re-apply joint controls to ensure arm holds position
+		for i in range(NUM_ARM_JOINTS):
+			p.setJointMotorControl2(self.env.arm, i, p.POSITION_CONTROL, 
+								   targetPosition=joint_pos[i], 
+								   force=self.env.JOINT_FORCE,
+								   maxVelocity=self.env.JOINT_FORCE)
 		
-		print(f"\nDifference:")
-		print(f"  Step difference: {len(replay_rewards) - len(original_rewards)}")
-		print(f"  Reward difference: {sum(replay_rewards) - sum(original_rewards):.2f}")
+		for gj_idx, gj in enumerate(GRIPPER_JOINTS):
+			p.setJointMotorControl2(self.env.arm, gj, p.POSITION_CONTROL,
+								   targetPosition=joint_pos[NUM_ARM_JOINTS + gj_idx], 
+								   force=self.env.GRIPPER_FORCE,
+								   maxVelocity=self.env.GRIPPER_FORCE)
 		
-		print(f"{'='*60}")
+		# Additional stabilization steps
+		for _ in range(5):
+			p.stepSimulation()
 	
-	def close(self):
+	def _print_comparison(self, original_obs: List[np.ndarray], replay_obs: List[np.ndarray]) -> None:
+		"""Print detailed comparison between original and replayed trajectories"""
+		print("\n" + "=" * 60)
+		print("Trajectory Comparison (Replay vs Original)")
+		print("=" * 60)
+		
+		original_obs = np.array(original_obs)
+		replay_obs = np.array(replay_obs)
+		
+		# Calculate absolute differences
+		diff = np.abs(original_obs - replay_obs)
+		
+		# Calculate indices for each component
+		idx = 0
+		conn_idx = idx
+		idx += self.OBS_CONN_STATE
+		joint_pos_idx = idx
+		idx += self.OBS_JOINT_POS
+		joint_vel_idx = idx
+		idx += self.OBS_JOINT_VEL
+		end_pos_idx = idx
+		idx += self.OBS_END_POS
+		end_orn_idx = idx
+		idx += self.OBS_END_ORN
+		rod_a_idx = idx
+		idx += self.OBS_ROD_STATE
+		rod_b_idx = idx
+		idx += self.OBS_ROD_STATE
+		rod_c_idx = idx
+		idx += self.OBS_ROD_STATE
+		tgt_idx = idx
+		
+		# Extract differences
+		conn_diff = diff[:, conn_idx]
+		joint_pos_diff = diff[:, joint_pos_idx:joint_pos_idx+self.OBS_JOINT_POS]
+		joint_vel_diff = diff[:, joint_vel_idx:joint_vel_idx+self.OBS_JOINT_VEL]
+		end_pos_diff = diff[:, end_pos_idx:end_pos_idx+self.OBS_END_POS]
+		end_orn_diff = diff[:, end_orn_idx:end_orn_idx+self.OBS_END_ORN]
+		rod_a_diff = diff[:, rod_a_idx:rod_a_idx+self.OBS_ROD_STATE]
+		rod_b_diff = diff[:, rod_b_idx:rod_b_idx+self.OBS_ROD_STATE]
+		rod_c_diff = diff[:, rod_c_idx:rod_c_idx+self.OBS_ROD_STATE]
+		tgt_pos_diff = diff[:, tgt_idx:]
+		
+		# Helper function to print statistics
+		def print_stats(name, data: np.ndarray, active: bool = True) -> None:
+			"""Print mean, max, and RMS statistics"""
+			if not active:
+				print(f"   {name} not present in trajectory")
+				return
+			
+			if data.ndim == 1:
+				data = data.reshape(-1, 1)
+			
+			mean = np.mean(data, axis=0)
+			max_val = np.max(data, axis=0)
+			rms = np.sqrt(np.mean(data**2, axis=0))
+			
+			print(f"   Mean: {mean}")
+			print(f"   Max:  {max_val}")
+			print(f"   RMS:  {rms}")
+		
+		# 1. End-effector Position Error
+		print("\n1. End-effector Position Error:")
+		print_stats("Position", end_pos_diff)
+		
+		# 2. End-effector Orientation Error
+		print("\n2. End-effector Orientation Error (quaternion):")
+		print_stats("Orientation", end_orn_diff)
+		
+		# 3. Joint Position Error
+		print("\n3. Joint Position Error:")
+		for i in range(self.OBS_JOINT_POS):
+			joint_name = f"Arm {i}" if i < 7 else f"Gripper {i-6}"
+			mean = np.mean(joint_pos_diff[:, i])
+			max_val = np.max(joint_pos_diff[:, i])
+			warn = "!" if mean > self.WARN_JOINT_THRESHOLD else ""
+			print(f"   {joint_name}: mean={mean:.6f}, max={max_val:.6f}{warn}")
+		
+		# 4. Rod A Position Error
+		print("\n4. Rod A Position Error:")
+		rod_a_active = np.any(original_obs[:, rod_a_idx:rod_a_idx+3] != 0)
+		print_stats("Rod A", rod_a_diff[:, 0:3], rod_a_active)
+		
+		# 5. Rod B Position Error
+		print("\n5. Rod B Position Error:")
+		rod_b_active = np.any(original_obs[:, rod_b_idx:rod_b_idx+3] != 0)
+		print_stats("Rod B", rod_b_diff[:, 0:3], rod_b_active)
+		
+		# 6. Rod C (Combined) Position Error
+		print("\n6. Rod C (Combined) Position Error:")
+		rod_c_active = np.any(original_obs[:, rod_c_idx:rod_c_idx+3] != 0)
+		print_stats("Combined rod", rod_c_diff[:, 0:3], rod_c_active)
+		
+		# 7. Overall Statistics
+		print("\n7. Overall Statistics:")
+		print(f"   Total steps: {len(original_obs)}")
+		conn_matches = np.sum(np.abs(conn_diff) < 0.01)
+		print(f"   Connection matches: {conn_matches} / {len(conn_diff)} ({100*conn_matches/len(conn_diff):.1f}%)")
+		print(f"   Target position diff: {np.mean(tgt_pos_diff):.6f}")
+		
+		# 8. Cumulative Errors
+		print("\n8. Cumulative Errors:")
+		end_pos_cum_error = np.cumsum(np.linalg.norm(end_pos_diff, axis=1))
+		percentiles = [0.25, 0.5, 0.75, 1.0]
+		for p in percentiles:
+			# Handle boundary case when p=1.0
+			idx_p = min(int(len(end_pos_cum_error) * p), len(end_pos_cum_error) - 1)
+			print(f"   At {int(p*100):3d}%: {end_pos_cum_error[idx_p]:.4f}")
+		
+		print("=" * 60)
+	
+	def list_trajectories(self, dataset_type: str) -> List[str]:
+		"""List all trajectory files in the specified dataset directory"""
+		save_dir = os.path.join(self.BASE_DIR, dataset_type)
+		if not os.path.exists(save_dir):
+			return []
+		
+		files = sorted([f for f in os.listdir(save_dir) 
+					   if f.startswith('trajectory_') and f.endswith('.pkl')])
+		
+		return files
+	
+	def close(self) -> None:
+		"""Close the environment"""
 		self.env.close()
 
 
 def main():
-	parser = argparse.ArgumentParser(description='Replay .pkl trajectory files')
-	parser.add_argument('trajectory', type=str, nargs='?', 
-					   help='Trajectory filename (e.g., trajectory_001.pkl) or path')
-	parser.add_argument('--list', '-l', action='store_true',
-					   help='List all available trajectory files')
-	parser.add_argument('--all', '-a', action='store_true',
-					   help='Replay all trajectory files')
-	parser.add_argument('--compare', '-c', action='store_true',
-					   help='Compare original and replay rewards')
-	parser.add_argument('--slow', '-s', action='store_true',
-					   help='Slow replay (for observation)')
-	parser.add_argument('--verbose', '-v', action='store_true',
-					   help='Show detailed information')
-	parser.add_argument('--debug', '-d', action='store_true',
-					   help='Show debug information')
-	parser.add_argument('--show-boundary', '-b', action='store_true',
+	parser = argparse.ArgumentParser(
+		description='PRML Project - Trajectory Replay',
+		formatter_class=argparse.RawDescriptionHelpFormatter,
+		epilog="""
+Examples:
+  # Replay a specific trajectory
+  python replay_trajectory.py -f data/train/trajectory_001.pkl
+  
+  # Replay all training trajectories
+  python replay_trajectory.py -t train -a
+  
+  # Replay with debug info and boundary markers at 0.5x speed
+  python replay_trajectory.py -f data/train/trajectory_001.pkl -d -b -s 0.5
+  
+  # Replay all validation trajectories at 2x speed
+  python replay_trajectory.py -t val -a -s 2
+		"""
+	)
+	
+	parser.add_argument('-b', '--show-boundary', action='store_true', 
 					   help='Show boundary markers')
-	parser.add_argument('--no-render', action='store_true',
-					   help='Do not render environment (replay without display)')
+	parser.add_argument('-d', '--debug', action='store_true', 
+					   help='Show debug information')
+	parser.add_argument('-s', '--speed', type=float, default=1.0,
+					   help='Playback speed multiplier (default: 1.0)')
+	parser.add_argument('-a', '--all', action='store_true', 
+					   help='Replay all trajectories in the specified dataset type')
+	parser.add_argument('-t', '--type', type=str, choices=['train', 'val'], default='train',
+					   help='Dataset type (train or val). Used with -a to select which dataset to replay')
+	parser.add_argument('-f', '--file', type=str, default=None,
+					   help='Specific trajectory file to replay (e.g., data/train/trajectory_001.pkl)')
+	parser.add_argument('-v', '--view', type=str, choices=['front', 'top', 'side'], default='front',
+					   help='Initial camera view (default: front)')
+	parser.add_argument('--render', action='store_true', default=True,
+					   help='Enable rendering (default: True)')
+	parser.add_argument('--no-render', dest='render', action='store_false',
+					   help='Disable rendering for headless mode')
 	
 	args = parser.parse_args()
 	
-	replayer = TrajectoryReplayer(
-		render=not args.no_render,
-		verbose=args.verbose,
-		debug=args.debug,
-		show_boundary=args.show_boundary
-	)
+	# Validate arguments
+	if args.all and args.file:
+		print("Error: Cannot use both -a/--all and -f/--file at the same time")
+		return
+	
+	if not args.all and not args.file:
+		print("Error: Must specify either -a/--all to replay all trajectories or -f/--file for a specific file")
+		parser.print_help()
+		return
+	
+	replayer = None
 	
 	try:
-		if args.list:
-			replayer.list_trajectories()
-		
-		elif args.all:
-			replayer.replay_all(slow_down=args.slow, show_info=args.verbose)
-		
-		elif args.trajectory:
-			if args.compare:
-				replayer.compare_rewards(args.trajectory)
-			else:
-				replayer.replay_single(
-					args.trajectory,
-					slow_down=args.slow,
-					show_info=args.verbose
-				)
+		if args.all:
+			# Replay all trajectories in the dataset
+			print(f"\n" + "=" * 60)
+			print(f"Replaying ALL trajectories from {args.type.upper()} dataset")
+			print("=" * 60)
+			
+			replayer = TrajectoryReplayer(debug=args.debug, 
+										  show_boundary=args.show_boundary, 
+										  speed=args.speed,
+										  render=args.render)
+			
+			files = replayer.list_trajectories(args.type)
+			
+			if not files:
+				print(f"\nNo trajectories found in {args.type} dataset")
+				return
+			
+			print(f"\nFound {len(files)} trajectories:")
+			for i, f in enumerate(files, 1):
+				print(f"  {i}. {f}")
+			
+			print(f"\nReplaying {len(files)} trajectories...")
+			
+			for idx, filename in enumerate(files, 1):
+				filepath = os.path.join(replayer.BASE_DIR, args.type, filename)
+				print(f"\n" + "=" * 60)
+				print(f"[{idx}/{len(files)}] Replaying: {filename}")
+				print("=" * 60)
+				
+				try:
+					traj = replayer.load_trajectory(filepath)
+					replayer.replay(traj, view=args.view)
+					
+					input("\nPress Enter to continue to next trajectory (or Ctrl+C to exit)...")
+					
+				except KeyboardInterrupt:
+					print(f"\nReplay interrupted by user during trajectory {idx}/{len(files)}")
+					break
+				
+				except Exception as e:
+					print(f"\nError replaying {filename}: {e}")
+					continue
+				
+				replayer.env.reset()
+			
+			print(f"\n" + "=" * 60)
+			print(f"Finished replaying trajectories")
+			print("=" * 60)
 		
 		else:
-			print("Please specify a trajectory file to replay, or use --list to see available files")
-			print("Use --help for help information")
+			# Replay a specific trajectory
+			replayer = TrajectoryReplayer(debug=args.debug, 
+										  show_boundary=args.show_boundary, 
+										  speed=args.speed,
+										  render=args.render)
+			
+			traj = replayer.load_trajectory(args.file)
+			replayer.replay(traj, view=args.view)
 	
 	except KeyboardInterrupt:
-		print("\n\nInterrupted by user")
+		print("\n\nProgram interrupted by user")
 	
 	except Exception as e:
 		print(f"\nError: {e}")
@@ -256,7 +618,9 @@ def main():
 		traceback.print_exc()
 	
 	finally:
-		replayer.close()
+		if replayer:
+			replayer.close()
+			print("\nReplayer closed")
 
 
 if __name__ == "__main__":

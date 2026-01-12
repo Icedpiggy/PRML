@@ -1,6 +1,7 @@
 import numpy as np
 import pickle
 import os
+import time
 import pybullet as p
 from envs import ArmEnv
 
@@ -153,6 +154,7 @@ class DataCollector:
 			traj['actions'].append(action)
 			
 			self._print_progress(step, info)
+			time.sleep(1./60.)
 			step += 1
 			
 			if done:

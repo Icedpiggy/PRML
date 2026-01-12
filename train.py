@@ -303,6 +303,10 @@ def main():
 					   help='Position speed for discrete actions (default: 0.5)')
 	parser.add_argument('--rot-speed', type=float, default=0.5,
 					   help='Rotation speed for discrete actions (default: 0.5)')
+	parser.add_argument('--obs-embed-hidden', type=int, default=256,
+					   help='Hidden dimension for observation embedding MLP (default: 256)')
+	parser.add_argument('--obs-embed-layers', type=int, default=2,
+					   help='Number of layers in observation embedding MLP (default: 2)')
 	
 	args = parser.parse_args()
 	
@@ -414,7 +418,9 @@ def main():
 		num_layers=args.num_layers,
 		dim_feedforward=args.dim_feedforward,
 		dropout=args.dropout,
-		max_seq_len=max_seq_len
+		max_seq_len=max_seq_len,
+		obs_embed_hidden=args.obs_embed_hidden,
+		obs_embed_layers=args.obs_embed_layers
 	).to(device)
 	
 	total_params = sum(p.numel() for p in model.parameters())
@@ -426,7 +432,7 @@ def main():
 	# Cross-Entropy Loss with ignore_index for padding
 	criterion = nn.CrossEntropyLoss(ignore_index=-100)
 	optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
-	scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
+	scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-5)
 	
 	print("\n" + "="*60)
 	print("Starting training...")

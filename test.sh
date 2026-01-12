@@ -3,7 +3,7 @@
 # Simple testing script for trained Transformer policy network
 
 python test.py \
-    --model-path checkpoints/best_model64_4.pth \
+    --model-path checkpoints/best_model.pth \
     --episodes 10 \
     --max-steps 5000 \
     --device cuda \

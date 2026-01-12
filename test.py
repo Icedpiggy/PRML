@@ -243,6 +243,10 @@ def test_model(env_config, model_path, device, num_episodes=10, max_steps=5000,
 	print("Creating model...")
 	print("="*60)
 	
+	# Get obs_embed parameters from checkpoint or use defaults
+	obs_embed_hidden = checkpoint['args'].get('obs_embed_hidden', 256)
+	obs_embed_layers = checkpoint['args'].get('obs_embed_layers', 2)
+	
 	model = TransformerPolicy(
 		obs_dim=obs_dim,
 		action_dim=action_dim,
@@ -251,7 +255,9 @@ def test_model(env_config, model_path, device, num_episodes=10, max_steps=5000,
 		num_layers=checkpoint['args']['num_layers'],
 		dim_feedforward=checkpoint['args']['dim_feedforward'],
 		dropout=checkpoint['args']['dropout'],
-		max_seq_len=max_seq_len
+		max_seq_len=max_seq_len,
+		obs_embed_hidden=obs_embed_hidden,
+		obs_embed_layers=obs_embed_layers
 	).to(device)
 	
 	model.load_state_dict(checkpoint['model_state_dict'])

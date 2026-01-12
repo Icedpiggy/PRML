@@ -30,6 +30,8 @@ class SimpleRodEnv:
 			print(f"Random seed: {seed}")
 		
 		self.pc = p.connect(p.GUI if render else p.DIRECT)
+		p.setPhysicsEngineParameter(deterministicOverlappingPairs=1)
+
 		if render:
 			p.resetDebugVisualizerCamera(1.5, 0, 0, [0.5, 0, 0.3])
 			p.configureDebugVisualizer(p.COV_ENABLE_GUI, 1)

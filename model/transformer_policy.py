@@ -26,7 +26,8 @@ class TransformerPolicy(nn.Module):
 	
 	def __init__(self, obs_dim: int, action_dim: int, d_model: int = 128, 
 				 nhead: int = 8, num_layers: int = 4, dim_feedforward: int = 512, 
-				 dropout: float = 0.1, max_seq_len: int = 10000, num_classes: int = 3):
+				 dropout: float = 0.1, max_seq_len: int = 10000, num_classes: int = 3,
+				 obs_embed_hidden: int = 256, obs_embed_layers: int = 2):
 		super(TransformerPolicy, self).__init__()
 		
 		self.obs_dim = obs_dim
@@ -34,8 +35,34 @@ class TransformerPolicy(nn.Module):
 		self.d_model = d_model
 		self.max_seq_len = max_seq_len
 		self.num_classes = num_classes  # Number of discrete actions per dimension
+		self.obs_embed_hidden = obs_embed_hidden
+		self.obs_embed_layers = obs_embed_layers
 		
-		self.obs_embedding = nn.Linear(obs_dim, d_model)
+		# Multi-layer MLP for observation embedding
+		obs_embed_layers_list = []
+		if obs_embed_layers == 1:
+			obs_embed_layers_list.append(nn.Linear(obs_dim, d_model))
+		elif obs_embed_layers == 2:
+			obs_embed_layers_list.extend([
+				nn.Linear(obs_dim, obs_embed_hidden),
+				nn.GELU(),
+				nn.LayerNorm(obs_embed_hidden),
+				nn.Dropout(dropout),
+				nn.Linear(obs_embed_hidden, d_model)
+			])
+		else:  # 3 or more layers
+			obs_embed_layers_list.append(nn.Linear(obs_dim, obs_embed_hidden))
+			obs_embed_layers_list.append(nn.GELU())
+			obs_embed_layers_list.append(nn.LayerNorm(obs_embed_hidden))
+			obs_embed_layers_list.append(nn.Dropout(dropout))
+			for _ in range(obs_embed_layers - 2):
+				obs_embed_layers_list.append(nn.Linear(obs_embed_hidden, obs_embed_hidden))
+				obs_embed_layers_list.append(nn.GELU())
+				obs_embed_layers_list.append(nn.LayerNorm(obs_embed_hidden))
+				obs_embed_layers_list.append(nn.Dropout(dropout))
+			obs_embed_layers_list.append(nn.Linear(obs_embed_hidden, d_model))
+		
+		self.obs_embedding = nn.Sequential(*obs_embed_layers_list)
 		self.pos_encoder = PositionalEncoding(d_model, max_len=max_seq_len)
 		
 		encoder_layer = nn.TransformerEncoderLayer(

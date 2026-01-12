@@ -4,7 +4,7 @@
 
 python train.py \
     --data-dir data \
-    --epochs 500 \
+    --epochs 1000 \
     --batch-size 8 \
     --lr 1e-4 \
     --d-model 128 \
@@ -17,4 +17,6 @@ python train.py \
     --save-dir checkpoints \
     --device cuda \
     --early-stopping-patience 100 \
-    --early-stopping-delta 1e-6
+    --early-stopping-delta 1e-6 \
+    --obs-embed-hidden 256 \
+    --obs-embed-layers 3
