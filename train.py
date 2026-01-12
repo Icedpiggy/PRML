@@ -59,7 +59,8 @@ class TrajectoryDataset(Dataset):
 			
 			self.trajectories.append({
 				'observations': obs_seq,
-				'actions': action_seq
+				'actions': action_seq,
+				'seq_len': traj['length']
 			})
 	
 	def _compute_global_obs_dim(self):
@@ -110,7 +111,7 @@ class TrajectoryDataset(Dataset):
 			processed_trajectories.append({
 				'observations': obs_seq,
 				'actions': action_classes,
-				'seq_len': traj['length']
+				'seq_len': traj['seq_len']
 			})
 		
 		self.trajectories = processed_trajectories
@@ -172,15 +173,21 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch, total_ep
 		positions = torch.arange(seq_len, device=device).unsqueeze(0).expand(batch_size, -1)
 		mask = positions < seq_lens.unsqueeze(1)
 		
-		logits_flat = logits.view(batch_size * seq_len, -1)
-		action_classes_flat = action_classes.view(-1)
-		mask_flat = mask.view(-1)
+		# logits: (batch_size, seq_len, action_dim, num_classes)
+		# action_classes: (batch_size, seq_len, action_dim)
 		
+		# Flatten all dimensions except the last one (num_classes)
+		num_classes = logits.shape[-1]
+		logits_flat = logits.view(-1, num_classes)  # (batch_size * seq_len * action_dim, num_classes)
+		action_classes_flat = action_classes.view(-1)  # (batch_size * seq_len * action_dim,)
+		
+		# Create mask for valid positions
+		mask_expanded = mask.unsqueeze(-1).expand(-1, -1, action_classes.shape[-1])  # (batch_size, seq_len, action_dim)
+		mask_flat = mask_expanded.reshape(-1)  # (batch_size * seq_len * action_dim,)
+		
+		# Compute loss (ignore padding with -100)
+		action_classes_flat[~mask_flat] = -100
 		loss = criterion(logits_flat, action_classes_flat)
-		
-		ignore_index = -100
-		weights = torch.where(mask_flat, torch.ones_like(mask_flat.float()), torch.zeros_like(mask_flat.float()))
-		loss = (loss * weights).sum() / (weights.sum() + 1e-8)
 		
 		optimizer.zero_grad()
 		loss.backward()
@@ -214,14 +221,21 @@ def validate(model, dataloader, criterion, device):
 			positions = torch.arange(seq_len, device=device).unsqueeze(0).expand(batch_size, -1)
 			mask = positions < seq_lens.unsqueeze(1)
 			
-			logits_flat = logits.view(batch_size * seq_len, -1)
-			action_classes_flat = action_classes.view(-1)
-			mask_flat = mask.view(-1)
+			# logits: (batch_size, seq_len, action_dim, num_classes)
+			# action_classes: (batch_size, seq_len, action_dim)
 			
+			# Flatten all dimensions except the last one (num_classes)
+			num_classes = logits.shape[-1]
+			logits_flat = logits.view(-1, num_classes)  # (batch_size * seq_len * action_dim, num_classes)
+			action_classes_flat = action_classes.view(-1)  # (batch_size * seq_len * action_dim,)
+			
+			# Create mask for valid positions
+			mask_expanded = mask.unsqueeze(-1).expand(-1, -1, action_classes.shape[-1])  # (batch_size, seq_len, action_dim)
+			mask_flat = mask_expanded.reshape(-1)  # (batch_size * seq_len * action_dim,)
+			
+			# Compute loss (ignore padding with -100)
+			action_classes_flat[~mask_flat] = -100
 			loss = criterion(logits_flat, action_classes_flat)
-			
-			weights = torch.where(mask_flat, torch.ones_like(mask_flat.float()), torch.zeros_like(mask_flat.float()))
-			loss = (loss * weights).sum() / (weights.sum() + 1e-8)
 			
 			total_loss += loss.item()
 	
