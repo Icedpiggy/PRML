@@ -15,15 +15,20 @@ from model import TransformerPolicy
 class TrajectoryDataset(Dataset):
 	
 	def __init__(self, data_dir, max_seq_len=None, pad=True, normalize_actions=True,
-				 action_mean=None, action_std=None):
+				 normalize_observations=True,
+				 action_mean=None, action_std=None,
+				 obs_mean=None, obs_std=None):
 
 		self.data_dir = data_dir
 		self.trajectories = []
 		self.max_seq_len = max_seq_len
 		self.pad = pad
 		self.normalize_actions = normalize_actions
+		self.normalize_observations = normalize_observations
 		self.action_mean = action_mean
 		self.action_std = action_std
+		self.obs_mean = obs_mean
+		self.obs_std = obs_std
 		self.max_obs_dim = None
 		
 		self._load_trajectories()
@@ -31,6 +36,14 @@ class TrajectoryDataset(Dataset):
 		
 		if max_seq_len is None and self.trajectories:
 			self.max_seq_len = max(len(t['observations']) for t in self.trajectories)
+		
+		if self.normalize_observations:
+			if self.obs_mean is None or self.obs_std is None:
+				self._compute_obs_stats()
+			else:
+				print(f"\nUsing provided observation normalization statistics:")
+				print(f"  Mean shape: {self.obs_mean.shape}")
+				print(f"  Std shape: {self.obs_std.shape}")
 		
 		if self.normalize_actions:
 			if self.action_mean is None or self.action_std is None:
@@ -71,6 +84,17 @@ class TrajectoryDataset(Dataset):
 		self.max_obs_dim = len(self.trajectories[0]['observations'][0])
 		print(f"Observation dimension: {self.max_obs_dim}")
 	
+	def _compute_obs_stats(self):
+		all_obs = np.concatenate([np.array(t['observations']) for t in self.trajectories], axis=0)
+		self.obs_mean = np.mean(all_obs, axis=0, keepdims=True).astype(np.float32)
+		self.obs_std = np.std(all_obs, axis=0, keepdims=True).astype(np.float32)
+		self.obs_std = np.where(self.obs_std < 1e-6, 1.0, self.obs_std)
+		print(f"\nObservation normalization:")
+		print(f"  Mean shape: {self.obs_mean.shape}")
+		print(f"  Std shape: {self.obs_std.shape}")
+		print(f"  Mean range: [{self.obs_mean.min():.4f}, {self.obs_mean.max():.4f}]")
+		print(f"  Std range: [{self.obs_std.min():.4f}, {self.obs_std.max():.4f}]")
+	
 	def _compute_action_stats(self):
 		all_actions = np.concatenate([np.array(t['actions']) for t in self.trajectories], axis=0)
 		self.action_mean = np.mean(all_actions, axis=0, keepdims=True).astype(np.float32)
@@ -81,7 +105,7 @@ class TrajectoryDataset(Dataset):
 		print(f"  Std: {self.action_std.flatten()}")
 	
 	def _preprocess_data(self):
-		"""Preprocess trajectories: normalize actions and pad/truncate sequences."""
+		"""Preprocess trajectories: normalize observations and actions, pad/truncate sequences."""
 		if not self.trajectories:
 			return
 		
@@ -90,12 +114,16 @@ class TrajectoryDataset(Dataset):
 			obs_seq = traj['observations'].copy()
 			action_seq = traj['actions'].copy()
 			
+			# Normalize observations
+			if self.normalize_observations:
+				obs_seq = (obs_seq.astype(np.float32) - 
+						  self.obs_mean.astype(np.float32)) / self.obs_std.astype(np.float32)
+			
 			# Normalize actions
 			if self.normalize_actions:
 				action_seq = (action_seq.astype(np.float32) - 
 							self.action_mean.astype(np.float32)) / self.action_std.astype(np.float32)
 			
-			# Pad or truncate sequences
 			if self.pad and self.max_seq_len:
 				seq_len = len(obs_seq)
 				if seq_len < self.max_seq_len:
@@ -109,7 +137,7 @@ class TrajectoryDataset(Dataset):
 			processed_trajectories.append({
 				'observations': obs_seq,
 				'actions': action_seq,
-				'seq_len': len(traj['observations'])  # Store original length
+				'seq_len': len(traj['observations'])
 			})
 		
 		self.trajectories = processed_trajectories
@@ -205,7 +233,6 @@ def validate(model, dataloader, criterion, device):
 			
 			pred_actions = model(obs_seq)
 			
-			# Vectorized mask creation
 			batch_size, seq_len, action_dim = pred_actions.shape
 			positions = torch.arange(seq_len, device=device).unsqueeze(0).expand(batch_size, -1)
 			mask = (positions < seq_lens.unsqueeze(1)).unsqueeze(-1).float()
@@ -315,17 +342,19 @@ def main():
 	print(f"Loading training data from: {train_dir}")
 	train_dataset = TrajectoryDataset(
 		train_dir, 
-		max_seq_len=args.max_seq_len, 
 		pad=not args.no_pad,
+		normalize_observations=True,
 		normalize_actions=True
 	)
 	
 	print(f"\nLoading validation data from: {val_dir}")
 	val_dataset = TrajectoryDataset(
 		val_dir, 
-		max_seq_len=args.max_seq_len, 
 		pad=not args.no_pad,
+		normalize_observations=True,
 		normalize_actions=True,
+		obs_mean=train_dataset.obs_mean,
+		obs_std=train_dataset.obs_std,
 		action_mean=train_dataset.action_mean,
 		action_std=train_dataset.action_std
 	)
@@ -408,8 +437,8 @@ def main():
 	train_losses = []
 	val_losses = []
 	best_val_loss = float('inf')
-	patience_counter = 0  # Early stopping counter
-	best_epoch = 0  # Track which epoch had the best model
+	patience_counter = 0
+	best_epoch = 0
 	
 	print(f"\nEarly stopping configuration:")
 	print(f"  Patience: {args.early_stopping_patience} epochs")
@@ -453,6 +482,8 @@ def main():
 				'obs_dim': obs_dim,
 				'action_dim': action_dim,
 				'max_seq_len': max_seq_len,
+				'obs_mean': train_dataset.obs_mean.tolist() if train_dataset.obs_mean is not None else None,
+				'obs_std': train_dataset.obs_std.tolist() if train_dataset.obs_std is not None else None,
 				'action_mean': train_dataset.action_mean.tolist() if train_dataset.action_mean is not None else None,
 				'action_std': train_dataset.action_std.tolist() if train_dataset.action_std is not None else None
 			}, best_model_path)
@@ -481,6 +512,8 @@ def main():
 		'obs_dim': obs_dim,
 		'action_dim': action_dim,
 		'max_seq_len': max_seq_len,
+		'obs_mean': train_dataset.obs_mean.tolist() if train_dataset.obs_mean is not None else None,
+		'obs_std': train_dataset.obs_std.tolist() if train_dataset.obs_std is not None else None,
 		'action_mean': train_dataset.action_mean.tolist() if train_dataset.action_mean is not None else None,
 		'action_std': train_dataset.action_std.tolist() if train_dataset.action_std is not None else None
 	}, final_model_path)
