@@ -201,8 +201,6 @@ class SimpleRodEnv:
 				p.applyExternalForce(rid, -1, f, [0, 0, 0], p.WORLD_FRAME)
 		
 		p.stepSimulation()
-		if self.render:
-			time.sleep(1./60.)
 		
 		return (self._is_done(),
 				{'conn': self._check_conn(), 'hit': self._check_hit(), 'bnd_vio': self._check_bnd_vio()})
@@ -301,6 +299,7 @@ def test_env(show_bnd=False, randomize=False, hard=False):
 			print(f"\n{msg}! steps:{step + 1}")
 			break
 		step += 1
+		time.sleep(1./60.)
 	
 	print(f"Total {step + 1} steps")
 	env.close()

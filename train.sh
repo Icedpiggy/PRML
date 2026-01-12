@@ -6,7 +6,7 @@ python train.py \
     --data-dir data \
     --epochs 500 \
     --batch-size 8 \
-    --lr 1e-3 \
+    --lr 1e-4 \
     --d-model 128 \
     --nhead 8 \
     --num-layers 4 \

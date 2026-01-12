@@ -30,7 +30,6 @@ class ArmEnv:
 	MAX_ROT_STEP = 0.1  # Max rotation step per action
 	JOINT_FORCE = 500  # Joint motor force
 	GRIPPER_FORCE = 300  # Gripper motor force
-	DT = 1./60.  # Simulation timestep
 	
 	CAMERA_CONFIGS = {
 		'front': {'distance': 1.5, 'yaw': 0, 'pitch': -30, 'target': [0, 0, 0.3]},
@@ -367,9 +366,6 @@ class ArmEnv:
 			self._update_gripper_helpers()
 			self._update_rod_helpers()
 		
-		if self.render:
-			time.sleep(self.DT)
-		
 		info = {
 			'conn': self._check_conn(),
 			'hit': self._check_hit(),
@@ -657,6 +653,8 @@ def test_env(show_bnd=False, randomize=False, debug=False, hard=False):
 							env.set_camera_view(current_view)
 			
 			done, info = env.step(action)
+
+			time.sleep(1./60.)
 			step += 1
 			
 			if (step + 1) % 100 == 0:
