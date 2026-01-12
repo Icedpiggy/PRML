@@ -140,7 +140,7 @@ class DataCollector:
 		print("=" * 60)
 	
 	def _collect_loop(self, traj_id):
-		traj = {'observations': [], 'actions': [], 'info': []}
+		traj = {'observations': [], 'actions': []}
 		step = 0
 		view = 'front'
 		
@@ -151,7 +151,6 @@ class DataCollector:
 			
 			traj['observations'].append(obs)
 			traj['actions'].append(action)
-			traj['info'].append(info)
 			
 			self._print_progress(step, info)
 			step += 1
@@ -215,22 +214,15 @@ class DataCollector:
 			'wall_orn': list(self.env.wall_orn) if hasattr(self.env, 'wall_orn') else [0, 0, 0, 1]
 		}
 		
-		traj['metadata'] = {
-			'traj_id': traj_id,
-			'length': len(traj['observations']),
-			'final_connected': traj['info'][-1]['conn'] if traj['info'] else False,
-			'final_hit': traj['info'][-1]['hit'] if traj['info'] else False,
-			'scene_info': scene_info
-		}
+		traj['traj_id'] = traj_id
+		traj['length'] = len(traj['observations'])
+		traj['scene_info'] = scene_info
 		
 		with open(fn, 'wb') as f:
 			pickle.dump(traj, f)
 		
-		md = traj['metadata']
 		print(f"✓ Trajectory saved: {fn}")
-		print(f"  Length: {md['length']} steps")
-		print(f"  Connected: {md['final_connected']}")
-		print(f"  Hit target: {md['final_hit']}")
+		print(f"  Length: {traj['length']} steps")
 	
 	def close(self):
 		self.env.close()
