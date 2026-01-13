@@ -43,13 +43,9 @@ class PolicyTester:
 		
 		self.model.eval()
 		
-		# History buffer for sequence model
 		self.obs_history = []
-		
-		# Track consecutive no-op actions
 		self.consecutive_no_ops = 0
 		
-		# Check if interactive input is available
 		import sys
 		self.input_available = sys.stdin.isatty()
 		
@@ -71,80 +67,59 @@ class PolicyTester:
 	
 	def get_action(self, obs):
 		"""Get action from model given current observation"""
-		# Normalize observation
 		obs_normalized = (obs.astype(np.float32) - 
 						 self.obs_mean.astype(np.float32)) / self.obs_std.astype(np.float32)
 		
-		# Convert to tensor
 		obs_tensor = torch.from_numpy(obs_normalized).float().unsqueeze(0).to(self.device)
 		
-		# Update history
 		self.obs_history.append(obs_tensor)
 		if len(self.obs_history) > self.max_seq_len:
 			self.obs_history.pop(0)
 		
-		# Stack observations
 		obs_seq = torch.cat(self.obs_history, dim=1)
 		
-		# Get action logits from model
 		with torch.no_grad():
-			action_logits = self.model(obs_seq)  # (1, seq_len, action_dim, num_classes)
+			action_logits = self.model(obs_seq)
 		
-		# Get logits for the last timestep
-		logits = action_logits[0, -1, :, :]  # (action_dim, num_classes)
+		logits = action_logits[0, -1, :, :]
 		
-		# Apply temperature scaling to logits
 		if self.temperature != 1.0:
 			logits = logits / self.temperature
 		
-		# Get class indices (argmax on logits, same as on probs)
-		class_indices = torch.argmax(logits, dim=-1).cpu().numpy()  # (action_dim,)
+		class_indices = torch.argmax(logits, dim=-1).cpu().numpy()
 		
-		# Check if all actions are no-op (all class 1)
 		is_no_op = np.all(class_indices == 1)
 		if is_no_op:
 			self.consecutive_no_ops += 1
 		else:
 			self.consecutive_no_ops = 0
 		
-		# If too many consecutive no-ops, force exploration by randomly changing some actions
 		if self.consecutive_no_ops >= self.no_op_threshold:
 			if self.debug:
 				print(f"\n[WARNING] {self.consecutive_no_ops} consecutive no-ops detected! Forcing exploration...")
-			# Randomly pick 2-3 dimensions to change
 			num_dims_to_change = np.random.randint(2, min(4, self.action_dim))
 			dims_to_change = np.random.choice(self.action_dim, num_dims_to_change, replace=False)
 			for dim in dims_to_change:
-				# Randomly choose class 0 or 2 (not 1)
 				class_indices[dim] = np.random.choice([0, 2])
 			self.consecutive_no_ops = 0
 		
-		# Convert class indices back to continuous action values
 		if self.easy:
-			# Easy mode: only 4 action dimensions (xyz + gripper)
-			action = np.zeros(7, dtype=np.float32)  # Full action space for environment
-			for i in range(4):  # Only process first 4 dimensions
-				if i == 3:  # Gripper dimension (index 3 in easy mode, maps to index 6 in full action)
-					# Class 0 -> -1.0 (close), Class 1 -> 0, Class 2 -> 1.0 (open)
+			action = np.zeros(7, dtype=np.float32)
+			for i in range(4):
+				if i == 3:
 					action[6] = class_indices[i] - 1.0
-				else:  # Position dimensions (0, 1, 2)
-					# Class 0 -> -pos_speed, Class 1 -> 0, Class 2 -> +pos_speed
+				else:
 					action[i] = (class_indices[i] - 1) * self.pos_speed
 		else:
-			# Normal mode: 7 action dimensions
 			action = np.zeros(7, dtype=np.float32)
 			for i in range(7):
-				if i == 6:  # Gripper dimension
-					# Class 0 -> -1.0 (close), Class 1 -> 0, Class 2 -> 1.0 (open)
+				if i == 6:
 					action[i] = class_indices[i] - 1.0
-				elif i < 3:  # Position dimensions (0, 1, 2)
-					# Class 0 -> -pos_speed, Class 1 -> 0, Class 2 -> +pos_speed
+				elif i < 3:
 					action[i] = (class_indices[i] - 1) * self.pos_speed
-				else:  # Rotation dimensions (3, 4, 5)
-					# Class 0 -> -rot_speed, Class 1 -> 0, Class 2 -> +rot_speed
+				else:
 					action[i] = (class_indices[i] - 1) * self.rot_speed
 		
-		# Store debug info for later display
 		self.last_debug_info = {
 			'seq_len': obs_seq.shape[1],
 			'logits_range': (float(logits.min()), float(logits.max())),
@@ -187,8 +162,8 @@ class PolicyTester:
 			print("="*80)
 		
 		try:
-			# Create progress bar
-			pbar = tqdm(range(max_steps), desc="Episode", disable=self.step_by_step or not self.debug,
+			# Create progress bar (disable only in step-by-step mode)
+			pbar = tqdm(range(max_steps), desc="Episode", disable=self.step_by_step,
 						unit="step")
 			
 			for step in pbar:
@@ -218,35 +193,35 @@ class PolicyTester:
 				
 				info_history.append(info.copy())
 				
-				# Update progress bar with debug info
-				if self.debug and not self.step_by_step:
-					debug_info = self.last_debug_info
-					
-					# Format debug info for progress bar
+				# Update progress bar
+				if not self.step_by_step:
 					postfix = []
 					postfix.append(f"conn={info['conn']}")
 					postfix.append(f"hit={info['hit']}")
 					
-					if env.conn and env.comb:
-						ends = env._get_ends(env.comb, env.COMB_L)
-						d = min(np.linalg.norm(e - np.array(env.tgt_pos)) for e in ends)
-						postfix.append(f"dist={d:.3f}m")
-					
-					# Add action info
-					postfix.append(f"pos=({debug_info['pos_delta'][0]:.3f},{debug_info['pos_delta'][1]:.3f},{debug_info['pos_delta'][2]:.3f})")
-					if not self.easy:
-						postfix.append(f"rot=({debug_info['rot_delta'][0]:.3f},{debug_info['rot_delta'][1]:.3f},{debug_info['rot_delta'][2]:.3f})")
-					postfix.append(f"grip={debug_info['gripper_cmd']:.1f}")
-					
-					# Add model output info
-					postfix.append(f"seq_len={debug_info['seq_len']}")
-					postfix.append(f"logits=[{debug_info['logits_range'][0]:.2f},{debug_info['logits_range'][1]:.2f}]")
-					postfix.append(f"temp={debug_info['temperature']:.2f}")
-					postfix.append(f"no_op={debug_info['consecutive_no_ops']}")
-					
-					# Format class indices
-					classes_str = ''.join(map(str, debug_info['class_indices']))
-					postfix.append(f"classes={classes_str}")
+					if self.debug:
+						debug_info = self.last_debug_info
+						
+						if env.conn and env.comb:
+							ends = env._get_ends(env.comb, env.COMB_L)
+							d = min(np.linalg.norm(e - np.array(env.tgt_pos)) for e in ends)
+							postfix.append(f"dist={d:.3f}m")
+						
+						# Add action info
+						postfix.append(f"pos=({debug_info['pos_delta'][0]:.3f},{debug_info['pos_delta'][1]:.3f},{debug_info['pos_delta'][2]:.3f})")
+						if not self.easy:
+							postfix.append(f"rot=({debug_info['rot_delta'][0]:.3f},{debug_info['rot_delta'][1]:.3f},{debug_info['rot_delta'][2]:.3f})")
+						postfix.append(f"grip={debug_info['gripper_cmd']:.1f}")
+						
+						# Add model output info
+						postfix.append(f"seq_len={debug_info['seq_len']}")
+						postfix.append(f"logits=[{debug_info['logits_range'][0]:.2f},{debug_info['logits_range'][1]:.2f}]")
+						postfix.append(f"temp={debug_info['temperature']:.2f}")
+						postfix.append(f"no_op={debug_info['consecutive_no_ops']}")
+						
+						# Format class indices
+						classes_str = ''.join(map(str, debug_info['class_indices']))
+						postfix.append(f"classes={classes_str}")
 					
 					pbar.set_postfix_str(' '.join(postfix))
 				
@@ -613,7 +588,10 @@ Examples:
 			speed=args.speed,
 			temperature=args.temperature,
 			no_op_threshold=args.no_op_threshold,
-			easy=args.easy
+			easy=args.easy,
+			step_by_step=args.step_by_step,
+			render=not args.no_render,
+			seed=args.seed
 		)
 		
 		if results is not None:
