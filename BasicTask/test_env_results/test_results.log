@@ -1,0 +1,624 @@
+============================================================
+Test Results - Mode: test
+============================================================
+
+Model Information:
+----------------------------------------
+  Epoch: 800
+  Train Loss: 0.000384
+  Val Loss: 0.000172
+  Total Parameters: 230,988
+
+Overall Statistics:
+----------------------------------------
+  Success Rate: 30.00%
+  Average Steps: 1686.0
+  Height Reached Rate: 30.00%
+  Boundary Violation Rate: 0.00%
+
+Episode Results:
+----------------------------------------
+
+Episode 1:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 2:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 3:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 4:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 5:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 6:
+  Success: True
+  Steps: 749
+  Reached Height: True
+  Boundary Violation: False
+
+Episode 7:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 8:
+  Success: True
+  Steps: 894
+  Reached Height: True
+  Boundary Violation: False
+
+Episode 9:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 10:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 11:
+  Success: True
+  Steps: 737
+  Reached Height: True
+  Boundary Violation: False
+
+Episode 12:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 13:
+  Success: True
+  Steps: 1089
+  Reached Height: True
+  Boundary Violation: False
+
+Episode 14:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 15:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 16:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 17:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 18:
+  Success: True
+  Steps: 1142
+  Reached Height: True
+  Boundary Violation: False
+
+Episode 19:
+  Success: True
+  Steps: 1123
+  Reached Height: True
+  Boundary Violation: False
+
+Episode 20:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 21:
+  Success: True
+  Steps: 721
+  Reached Height: True
+  Boundary Violation: False
+
+Episode 22:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 23:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 24:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 25:
+  Success: True
+  Steps: 984
+  Reached Height: True
+  Boundary Violation: False
+
+Episode 26:
+  Success: True
+  Steps: 764
+  Reached Height: True
+  Boundary Violation: False
+
+Episode 27:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 28:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 29:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 30:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 31:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 32:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 33:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 34:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 35:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 36:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 37:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 38:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 39:
+  Success: True
+  Steps: 990
+  Reached Height: True
+  Boundary Violation: False
+
+Episode 40:
+  Success: True
+  Steps: 897
+  Reached Height: True
+  Boundary Violation: False
+
+Episode 41:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 42:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 43:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 44:
+  Success: True
+  Steps: 855
+  Reached Height: True
+  Boundary Violation: False
+
+Episode 45:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 46:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 47:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 48:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 49:
+  Success: True
+  Steps: 851
+  Reached Height: True
+  Boundary Violation: False
+
+Episode 50:
+  Success: True
+  Steps: 708
+  Reached Height: True
+  Boundary Violation: False
+
+Episode 51:
+  Success: True
+  Steps: 1039
+  Reached Height: True
+  Boundary Violation: False
+
+Episode 52:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 53:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 54:
+  Success: True
+  Steps: 959
+  Reached Height: True
+  Boundary Violation: False
+
+Episode 55:
+  Success: True
+  Steps: 872
+  Reached Height: True
+  Boundary Violation: False
+
+Episode 56:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 57:
+  Success: True
+  Steps: 1141
+  Reached Height: True
+  Boundary Violation: False
+
+Episode 58:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 59:
+  Success: True
+  Steps: 1044
+  Reached Height: True
+  Boundary Violation: False
+
+Episode 60:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 61:
+  Success: True
+  Steps: 711
+  Reached Height: True
+  Boundary Violation: False
+
+Episode 62:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 63:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 64:
+  Success: True
+  Steps: 1146
+  Reached Height: True
+  Boundary Violation: False
+
+Episode 65:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 66:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 67:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 68:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 69:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 70:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 71:
+  Success: True
+  Steps: 738
+  Reached Height: True
+  Boundary Violation: False
+
+Episode 72:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 73:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 74:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 75:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 76:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 77:
+  Success: True
+  Steps: 1033
+  Reached Height: True
+  Boundary Violation: False
+
+Episode 78:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 79:
+  Success: True
+  Steps: 1109
+  Reached Height: True
+  Boundary Violation: False
+
+Episode 80:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 81:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 82:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 83:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 84:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 85:
+  Success: True
+  Steps: 1126
+  Reached Height: True
+  Boundary Violation: False
+
+Episode 86:
+  Success: True
+  Steps: 1030
+  Reached Height: True
+  Boundary Violation: False
+
+Episode 87:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 88:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 89:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 90:
+  Success: True
+  Steps: 755
+  Reached Height: True
+  Boundary Violation: False
+
+Episode 91:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 92:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 93:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 94:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 95:
+  Success: True
+  Steps: 1143
+  Reached Height: True
+  Boundary Violation: False
+
+Episode 96:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 97:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 98:
+  Success: True
+  Steps: 1090
+  Reached Height: True
+  Boundary Violation: False
+
+Episode 99:
+  Success: False
+  Steps: 2000
+  Reached Height: False
+  Boundary Violation: False
+
+Episode 100:
+  Success: True
+  Steps: 1163
+  Reached Height: True
+  Boundary Violation: False
+
+============================================================
+Generated by test.py
+============================================================

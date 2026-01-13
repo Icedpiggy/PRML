@@ -170,7 +170,7 @@ def collate_fn(batch):
 	}
 
 
-def compute_class_weights(dataset, gripper_weight_multiplier=5.0):
+def compute_class_weights(dataset):
 	all_actions = np.concatenate([t['actions'] for t in dataset.trajectories], axis=0)
 	valid_mask = all_actions != -100
 	
@@ -179,7 +179,6 @@ def compute_class_weights(dataset, gripper_weight_multiplier=5.0):
 	per_dim_weights = np.ones((action_dim, 3), dtype=np.float32)
 	
 	print(f"\nClass weights (inverse frequency, per action dimension):")
-	print(f"  Note: Dimension 3 is gripper (critical but rare)")
 	print("-" * 70)
 	
 	for dim in range(action_dim):
@@ -193,10 +192,6 @@ def compute_class_weights(dataset, gripper_weight_multiplier=5.0):
 		
 		class_weights = class_weights / np.sum(class_weights) * 3
 		
-		if dim == 3 and gripper_weight_multiplier > 1.0:
-			class_weights[0] *= gripper_weight_multiplier
-			class_weights[2] *= gripper_weight_multiplier
-		
 		per_dim_weights[dim] = class_weights
 		
 		dim_name = ['X', 'Y', 'Z', 'GRIPPER'][dim] if dim < 4 else f'Dim{dim}'
@@ -207,12 +202,6 @@ def compute_class_weights(dataset, gripper_weight_multiplier=5.0):
 			print(f"  Class {cls} ({cls_name}): weight={class_weights[cls]:.4f}, "
 				  f"count={class_counts[cls]:6d} ({percentage:5.2f}%)")
 	
-	print("\n" + "="*70)
-	print("Weight Summary:")
-	print("="*70)
-	print(f"Gripper weight multiplier: {gripper_weight_multiplier}x")
-	print(f"This means gripper actions (open/close) are {gripper_weight_multiplier}x more important")
-	print("than other actions during training.")
 	print("="*70)
 	
 	return torch.FloatTensor(per_dim_weights).cuda() if torch.cuda.is_available() else torch.FloatTensor(per_dim_weights)
@@ -433,11 +422,6 @@ def main():
 					   help='Number of layers in observation embedding MLP (default: 2)')
 	parser.add_argument('--use-class-weights', action='store_true',
 					   help='Use class weights to handle class imbalance')
-	parser.add_argument('--gripper-weight-mult', type=float, default=2.0,
-					   help='Multiplier for gripper action weights (default: 2.0). '
-					    'Gripper actions (open/close) are rare but critical. '
-					    'This increases their importance during training. '
-					    'Set to 1.0 to disable this special weighting.')
 	parser.add_argument('--entropy-weight', type=float, default=0.01,
 					   help='Entropy regularization weight (default: 0.01). Set to 0 to disable.')
 	
@@ -567,7 +551,7 @@ def main():
 		print("\n" + "="*60)
 		print("Computing class weights...")
 		print("="*60)
-		class_weights = compute_class_weights(train_dataset, gripper_weight_multiplier=args.gripper_weight_mult)
+		class_weights = compute_class_weights(train_dataset)
 	
 	criterion = nn.CrossEntropyLoss(ignore_index=-100)
 	optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=0.1)
@@ -578,9 +562,6 @@ def main():
 	print("="*60)
 	print(f"\nTraining configuration:")
 	print(f"  Use class weights: {args.use_class_weights}")
-	if args.use_class_weights:
-		print(f"  Gripper weight multiplier: {args.gripper_weight_mult}x")
-		print(f"  (Gripper actions are {args.gripper_weight_mult}x more important)")
 	print(f"  Entropy regularization weight: {args.entropy_weight}")
 	
 	train_losses = []

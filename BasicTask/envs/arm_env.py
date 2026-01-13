@@ -289,17 +289,17 @@ def test_env(show_bnd=False, randomize=False, debug=False, seed=None):
 			for key, event in keys.items():
 				if event & p.KEY_IS_DOWN:
 					if key in [ord('c'), ord('C')]:
-						action[2] += 0.5
+						action[2] += 1.0
 					elif key in [ord('z'), ord('Z')]:
-						action[2] -= 0.5
+						action[2] -= 1.0
 					elif key == p.B3G_LEFT_ARROW:
-						action[0] -= 0.5
+						action[0] -= 1.0
 					elif key == p.B3G_RIGHT_ARROW:
-						action[0] += 0.5
+						action[0] += 1.0
 					elif key == p.B3G_UP_ARROW:
-						action[1] += 0.5
+						action[1] += 1.0
 					elif key == p.B3G_DOWN_ARROW:
-						action[1] -= 0.5
+						action[1] -= 1.0
 					elif key == p.B3G_SPACE:
 						action[3] = -1.0
 					elif key in [ord('b'), ord('B')]:

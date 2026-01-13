@@ -21,8 +21,7 @@ python train.py \
     --obs-embed-hidden 128 \
     --obs-embed-layers 3 \
     --use-class-weights \
-    --entropy-weight 0.03 \
-    --gripper-weight-mult 1.0
+    --entropy-weight 0.03
 
 # no dropout
 # no early-stop
