@@ -22,7 +22,7 @@ class PolicyTester:
 	def __init__(self, model, device, pos_speed, rot_speed,
 				 obs_mean, obs_std, obs_dim, action_dim, 
 				 max_seq_len, debug=False, show_boundary=False, 
-				 speed=1.0):
+				 speed=1.0, temperature=1.0, no_op_threshold=50, easy=False):
 		self.model = model
 		self.device = device
 		self.pos_speed = pos_speed
@@ -35,18 +35,27 @@ class PolicyTester:
 		self.debug = debug
 		self.show_boundary = show_boundary
 		self.speed = speed
+		self.temperature = temperature
+		self.no_op_threshold = no_op_threshold
+		self.easy = easy
 		
 		self.model.eval()
 		
 		# History buffer for sequence model
 		self.obs_history = []
 		
+		# Track consecutive no-op actions
+		self.consecutive_no_ops = 0
+		
 		print(f"\nPolicy Tester initialized")
 		print(f"  Debug mode: {debug}")
 		print(f"  Show boundary: {show_boundary}")
+		print(f"  Easy mode: {easy}")
 		print(f"  Playback speed: {speed}x")
 		print(f"  Position speed: {pos_speed}")
 		print(f"  Rotation speed: {rot_speed}")
+		print(f"  Temperature: {temperature}")
+		print(f"  No-op threshold: {no_op_threshold} steps")
 	
 	def get_action(self, obs):
 		"""Get action from model given current observation"""
@@ -72,21 +81,56 @@ class PolicyTester:
 		# Get logits for the last timestep
 		logits = action_logits[0, -1, :, :]  # (action_dim, num_classes)
 		
+		# Apply temperature scaling to logits
+		if self.temperature != 1.0:
+			logits = logits / self.temperature
+		
 		# Get class indices (argmax on logits, same as on probs)
 		class_indices = torch.argmax(logits, dim=-1).cpu().numpy()  # (action_dim,)
 		
+		# Check if all actions are no-op (all class 1)
+		is_no_op = np.all(class_indices == 1)
+		if is_no_op:
+			self.consecutive_no_ops += 1
+		else:
+			self.consecutive_no_ops = 0
+		
+		# If too many consecutive no-ops, force exploration by randomly changing some actions
+		if self.consecutive_no_ops >= self.no_op_threshold:
+			if self.debug:
+				print(f"\n[WARNING] {self.consecutive_no_ops} consecutive no-ops detected! Forcing exploration...")
+			# Randomly pick 2-3 dimensions to change
+			num_dims_to_change = np.random.randint(2, min(4, self.action_dim))
+			dims_to_change = np.random.choice(self.action_dim, num_dims_to_change, replace=False)
+			for dim in dims_to_change:
+				# Randomly choose class 0 or 2 (not 1)
+				class_indices[dim] = np.random.choice([0, 2])
+			self.consecutive_no_ops = 0
+		
 		# Convert class indices back to continuous action values
-		action = np.zeros(7, dtype=np.float32)
-		for i in range(7):
-			if i == 6:  # Gripper dimension
-				# Class 0 -> -1.0 (close), Class 1 -> 0, Class 2 -> 1.0 (open)
-				action[i] = class_indices[i] - 1.0
-			elif i < 3:  # Position dimensions (0, 1, 2)
-				# Class 0 -> -pos_speed, Class 1 -> 0, Class 2 -> +pos_speed
-				action[i] = (class_indices[i] - 1) * self.pos_speed
-			else:  # Rotation dimensions (3, 4, 5)
-				# Class 0 -> -rot_speed, Class 1 -> 0, Class 2 -> +rot_speed
-				action[i] = (class_indices[i] - 1) * self.rot_speed
+		if self.easy:
+			# Easy mode: only 4 action dimensions (xyz + gripper)
+			action = np.zeros(7, dtype=np.float32)  # Full action space for environment
+			for i in range(4):  # Only process first 4 dimensions
+				if i == 3:  # Gripper dimension (index 3 in easy mode, maps to index 6 in full action)
+					# Class 0 -> -1.0 (close), Class 1 -> 0, Class 2 -> 1.0 (open)
+					action[6] = class_indices[i] - 1.0
+				else:  # Position dimensions (0, 1, 2)
+					# Class 0 -> -pos_speed, Class 1 -> 0, Class 2 -> +pos_speed
+					action[i] = (class_indices[i] - 1) * self.pos_speed
+		else:
+			# Normal mode: 7 action dimensions
+			action = np.zeros(7, dtype=np.float32)
+			for i in range(7):
+				if i == 6:  # Gripper dimension
+					# Class 0 -> -1.0 (close), Class 1 -> 0, Class 2 -> 1.0 (open)
+					action[i] = class_indices[i] - 1.0
+				elif i < 3:  # Position dimensions (0, 1, 2)
+					# Class 0 -> -pos_speed, Class 1 -> 0, Class 2 -> +pos_speed
+					action[i] = (class_indices[i] - 1) * self.pos_speed
+				else:  # Rotation dimensions (3, 4, 5)
+					# Class 0 -> -rot_speed, Class 1 -> 0, Class 2 -> +rot_speed
+					action[i] = (class_indices[i] - 1) * self.rot_speed
 		
 		# Store debug info for later display
 		self.last_debug_info = {
@@ -97,7 +141,10 @@ class PolicyTester:
 			'action_norm': float(np.linalg.norm(action)),
 			'pos_delta': action[:3],
 			'rot_delta': action[3:6],
-			'gripper_cmd': action[6]
+			'gripper_cmd': action[6],
+			'consecutive_no_ops': self.consecutive_no_ops,
+			'temperature': self.temperature,
+			'easy_mode': self.easy
 		}
 		
 		return action
@@ -146,12 +193,15 @@ class PolicyTester:
 					
 					# Add action info
 					postfix.append(f"pos=({debug_info['pos_delta'][0]:.3f},{debug_info['pos_delta'][1]:.3f},{debug_info['pos_delta'][2]:.3f})")
-					postfix.append(f"rot=({debug_info['rot_delta'][0]:.3f},{debug_info['rot_delta'][1]:.3f},{debug_info['rot_delta'][2]:.3f})")
+					if not self.easy:
+						postfix.append(f"rot=({debug_info['rot_delta'][0]:.3f},{debug_info['rot_delta'][1]:.3f},{debug_info['rot_delta'][2]:.3f})")
 					postfix.append(f"grip={debug_info['gripper_cmd']:.1f}")
 					
 					# Add model output info
 					postfix.append(f"seq_len={debug_info['seq_len']}")
 					postfix.append(f"logits=[{debug_info['logits_range'][0]:.2f},{debug_info['logits_range'][1]:.2f}]")
+					postfix.append(f"temp={debug_info['temperature']:.2f}")
+					postfix.append(f"no_op={debug_info['consecutive_no_ops']}")
 					
 					# Format class indices
 					classes_str = ''.join(map(str, debug_info['class_indices']))
@@ -194,7 +244,8 @@ class PolicyTester:
 
 
 def test_model(env_config, model_path, device, num_episodes=10, max_steps=5000,
-				view='front', debug=False, show_boundary=False, speed=1.0):
+				view='front', debug=False, show_boundary=False, speed=1.0,
+				temperature=1.0, no_op_threshold=50, easy=False):
 	"""Test model in randomized environment"""
 	
 	print("\n" + "="*60)
@@ -228,6 +279,7 @@ def test_model(env_config, model_path, device, num_episodes=10, max_steps=5000,
 	print(f"  Observation dimension: {obs_dim}")
 	print(f"  Action dimension: {action_dim}")
 	print(f"  Max sequence length: {max_seq_len}")
+	print(f"  Easy mode: {easy}")
 	print(f"  Model epoch: {checkpoint.get('epoch', 'N/A')}")
 	print(f"  Train loss: {checkpoint.get('train_loss', 'N/A'):.6f}")
 	print(f"  Val loss: {checkpoint.get('val_loss', 'N/A'):.6f}")
@@ -269,7 +321,8 @@ def test_model(env_config, model_path, device, num_episodes=10, max_steps=5000,
 	tester = PolicyTester(
 		model, device, pos_speed, rot_speed, obs_mean, obs_std,
 		obs_dim, action_dim, max_seq_len, debug=debug, 
-		show_boundary=show_boundary, speed=speed
+		show_boundary=show_boundary, speed=speed,
+		temperature=temperature, no_op_threshold=no_op_threshold, easy=easy
 	)
 	
 	print("\n" + "="*60)
@@ -378,6 +431,9 @@ Examples:
   # Test model with default settings
   python test.py --model-path checkpoints/best_model.pth
   
+  # Test easy mode model
+  python test.py --model-path checkpoints/best_model.pth --easy
+  
   # Test with 20 episodes in hard mode
   python test.py --model-path checkpoints/best_model.pth --episodes 20 --hard
   
@@ -409,6 +465,12 @@ Examples:
 					   help='Show boundary markers')
 	parser.add_argument('--speed', type=float, default=1.0,
 					   help='Simulation speed multiplier (default: 1.0)')
+	parser.add_argument('--temperature', type=float, default=1.0,
+					   help='Temperature for softmax (default: 1.0). Higher values encourage exploration.')
+	parser.add_argument('--no-op-threshold', type=int, default=50,
+					   help='Number of consecutive no-ops before forcing exploration (default: 50)')
+	parser.add_argument('--easy', action='store_true',
+					   help='Easy mode: only use xyz movement + gripper control')
 	parser.add_argument('--save-dir', type=str, default='test_env_results',
 					   help='Directory to save test results')
 	parser.add_argument('--all-modes', action='store_true',
@@ -457,7 +519,10 @@ Examples:
 			view=args.view,
 			debug=args.debug,
 			show_boundary=args.show_boundary,
-			speed=args.speed
+			speed=args.speed,
+			temperature=args.temperature,
+			no_op_threshold=args.no_op_threshold,
+			easy=args.easy
 		)
 		
 		if results is not None:

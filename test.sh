@@ -11,4 +11,5 @@ python test.py \
     --randomize \
     --debug \
     --speed 1.0 \
-    --save-dir test_env_results
+    --save-dir test_env_results \
+    --easy

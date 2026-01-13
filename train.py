@@ -14,7 +14,8 @@ from model import TransformerPolicy
 
 class TrajectoryDataset(Dataset):
 	
-	def __init__(self, data_dir, max_seq_len=None, pad=True, normalize_observations=True, obs_mean=None, obs_std=None):
+	def __init__(self, data_dir, max_seq_len=None, pad=True, normalize_observations=True, 
+				 obs_mean=None, obs_std=None, easy=False):
 
 		self.data_dir = data_dir
 		self.trajectories = []
@@ -24,6 +25,7 @@ class TrajectoryDataset(Dataset):
 		self.obs_mean = obs_mean
 		self.obs_std = obs_std
 		self.max_obs_dim = None
+		self.easy = easy
 		
 		self._load_trajectories()
 		self._compute_global_obs_dim()
@@ -48,6 +50,9 @@ class TrajectoryDataset(Dataset):
 		files.sort()
 		
 		print(f"Found {len(files)} trajectory files")
+		if self.easy:
+			print("Easy mode enabled: using filtered observations and actions")
+			print("Only keeping data before connection (obs[0] = 0)")
 		
 		for fn in files:
 			filepath = os.path.join(self.data_dir, fn)
@@ -57,10 +62,18 @@ class TrajectoryDataset(Dataset):
 			obs_seq = np.array(traj['observations'], dtype=np.float32)
 			action_seq = np.array(traj['actions'], dtype=np.float32)
 			
+			# Filter data if in easy mode
+			if self.easy:
+				obs_seq, action_seq = self._filter_easy_data(obs_seq, action_seq)
+				
+				# Skip trajectories that became too short after filtering
+				if obs_seq is None:
+					continue
+			
 			self.trajectories.append({
 				'observations': obs_seq,
 				'actions': action_seq,
-				'seq_len': traj['length']
+				'seq_len': len(obs_seq)
 			})
 	
 	def _compute_global_obs_dim(self):
@@ -81,6 +94,40 @@ class TrajectoryDataset(Dataset):
 		print(f"  Std shape: {self.obs_std.shape}")
 		print(f"  Mean range: [{self.obs_mean.min():.4f}, {self.obs_mean.max():.4f}]")
 		print(f"  Std range: [{self.obs_std.min():.4f}, {self.obs_std.max():.4f}]")
+	
+	def _filter_easy_data(self, obs_seq, action_seq):
+		"""Filter data for easy mode: keep arm state + AB rod states, xyz movement + gripper control
+		Only keep data before connection happens (obs[:, 0] == 0)"""
+		# Find the first timestep where connection happens (obs[0] == 1)
+		# Only keep data before connection
+		conn_indices = np.where(obs_seq[:, 0] >= 0.5)[0]  # obs[0] == 1 means connected
+		
+		if len(conn_indices) > 0:
+			# Keep only data before first connection
+			cutoff_idx = conn_indices[0]
+			obs_seq = obs_seq[:cutoff_idx]
+			action_seq = action_seq[:cutoff_idx]
+		
+		# Skip if trajectory is too short (after potential connection cutoff)
+		if len(obs_seq) < 10:
+			return None, None
+		
+		# Observations to keep:
+		# - Indices 1-7: joint positions (7 values)
+		# - Indices 8-14: joint velocities (7 values)
+		# - Indices 15-17: end-effector position (3 values)
+		# - Indices 18-21: end-effector orientation (4 values)
+		# - Indices 22-34: rod A state (13 values)
+		# - Indices 35-47: rod B state (13 values)
+		# Total: 7 + 7 + 3 + 4 + 13 + 13 = 47 values
+		obs_filtered = obs_seq[:, 1:48]
+		
+		# Actions to keep:
+		# - Indices 0-2: xyz movement
+		# - Index 6: gripper control
+		action_filtered = np.concatenate([action_seq[:, 0:3], action_seq[:, 6:7]], axis=1)
+		
+		return obs_filtered, action_filtered
 	
 	def _preprocess_data(self):
 		if not self.trajectories:
@@ -103,7 +150,7 @@ class TrajectoryDataset(Dataset):
 				if seq_len < self.max_seq_len:
 					pad_len = self.max_seq_len - seq_len
 					obs_seq = np.pad(obs_seq, ((0, pad_len), (0, 0)), mode='constant', constant_values=0)
-					action_classes = np.pad(action_classes, ((0, pad_len), (0, 0)), mode='constant', constant_values=-1)
+					action_classes = np.pad(action_classes, ((0, pad_len), (0, 0)), mode='constant', constant_values=-100)
 				elif seq_len > self.max_seq_len:
 					obs_seq = obs_seq[:self.max_seq_len]
 					action_classes = action_classes[:self.max_seq_len]
@@ -130,6 +177,23 @@ class TrajectoryDataset(Dataset):
 		if self.pad and self.max_seq_len:
 			print(f"  Padded to max_seq_len: {self.max_seq_len}")
 		print(f"  Observation dimension: {self.max_obs_dim}")
+		
+		# Analyze action class distribution
+		all_actions = np.concatenate([t['actions'] for t in self.trajectories], axis=0)
+		action_dim = all_actions.shape[-1]
+		
+		print(f"\nAction class distribution (excluding padding):")
+		for dim in range(action_dim):
+			valid_mask = all_actions[:, dim] != -100
+			dim_actions = all_actions[valid_mask, dim]
+			class_counts = np.bincount(dim_actions, minlength=3)
+			total = len(dim_actions)
+			
+			print(f"  Dimension {dim}:")
+			for cls in range(3):
+				count = class_counts[cls]
+				percentage = count / total * 100 if total > 0 else 0
+				print(f"    Class {cls}: {count:6d} ({percentage:5.2f}%)")
 	
 	def __len__(self):
 		return len(self.trajectories)
@@ -156,9 +220,33 @@ def collate_fn(batch):
 	}
 
 
-def train_epoch(model, dataloader, optimizer, criterion, device, epoch, total_epochs):
+def compute_class_weights(dataset):
+	"""Compute inverse frequency class weights to handle class imbalance"""
+	all_actions = np.concatenate([t['actions'] for t in dataset.trajectories], axis=0)
+	valid_mask = all_actions != -100
+	
+	class_counts = np.bincount(all_actions[valid_mask].flatten(), minlength=3)
+	total_samples = np.sum(class_counts)
+	
+	# Compute inverse frequency weights
+	# Add small epsilon to avoid division by zero
+	class_weights = 1.0 / (class_counts / total_samples + 1e-6)
+	
+	# Normalize weights
+	class_weights = class_weights / np.sum(class_weights) * 3
+	
+	print(f"\nClass weights (inverse frequency):")
+	for cls in range(3):
+		print(f"  Class {cls}: {class_weights[cls]:.4f} (count: {class_counts[cls]})")
+	
+	return torch.FloatTensor(class_weights).cuda() if torch.cuda.is_available() else torch.FloatTensor(class_weights)
+
+
+def train_epoch(model, dataloader, optimizer, criterion, device, epoch, total_epochs, class_weights=None, entropy_weight=0.01):
 	model.train()
 	total_loss = 0
+	total_cls_loss = 0
+	total_entropy_loss = 0
 	
 	pbar = tqdm(dataloader, desc=f"Epoch {epoch}/{total_epochs}")
 	
@@ -185,9 +273,31 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch, total_ep
 		mask_expanded = mask.unsqueeze(-1).expand(-1, -1, action_classes.shape[-1])  # (batch_size, seq_len, action_dim)
 		mask_flat = mask_expanded.reshape(-1)  # (batch_size * seq_len * action_dim,)
 		
-		# Compute loss (ignore padding with -100)
-		action_classes_flat[~mask_flat] = -100
-		loss = criterion(logits_flat, action_classes_flat)
+		if class_weights is not None:
+			# Apply class weights to the loss
+			# Create weight matrix for each sample
+			weights = torch.ones_like(action_classes_flat, dtype=torch.float)
+			valid_mask = action_classes_flat != -100
+			weights[valid_mask] = class_weights[action_classes_flat[valid_mask]]
+			loss_f = nn.CrossEntropyLoss(weight=class_weights, ignore_index=-100, reduction='none')
+			cls_loss_per_sample = loss_f(logits_flat, action_classes_flat)
+			cls_loss = (cls_loss_per_sample * weights).sum() / weights.sum()
+		else:
+			cls_loss = criterion(logits_flat, action_classes_flat)
+		
+		# Compute entropy regularization loss to encourage exploration
+		# Entropy = -sum(p * log(p)) where p is softmax probability
+		if entropy_weight > 0:
+			probs = torch.softmax(logits_flat, dim=-1)
+			log_probs = torch.log_softmax(logits_flat, dim=-1)
+			entropy = -(probs * log_probs).sum(dim=-1)
+			# Only compute entropy for valid positions
+			entropy_loss = entropy[mask_flat].mean()
+		else:
+			entropy_loss = torch.tensor(0.0, device=device)
+		
+		# Total loss = classification loss + entropy regularization
+		loss = cls_loss + entropy_weight * entropy_loss
 		
 		optimizer.zero_grad()
 		loss.backward()
@@ -195,17 +305,23 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch, total_ep
 		optimizer.step()
 		
 		total_loss += loss.item()
+		total_cls_loss += cls_loss.item()
+		total_entropy_loss += entropy_loss.item()
 		
 		pbar.set_postfix({
-			'loss': f'{loss.item():.4f}'
+			'loss': f'{loss.item():.4f}',
+			'cls': f'{cls_loss.item():.4f}',
+			'ent': f'{entropy_loss.item():.4f}'
 		})
 	
 	avg_loss = total_loss / len(dataloader)
+	avg_cls_loss = total_cls_loss / len(dataloader)
+	avg_entropy_loss = total_entropy_loss / len(dataloader)
 	
-	return avg_loss
+	return avg_loss, avg_cls_loss, avg_entropy_loss
 
 
-def validate(model, dataloader, criterion, device):
+def validate(model, dataloader, criterion, device, class_weights=None):
 	model.eval()
 	total_loss = 0
 	
@@ -233,9 +349,17 @@ def validate(model, dataloader, criterion, device):
 			mask_expanded = mask.unsqueeze(-1).expand(-1, -1, action_classes.shape[-1])  # (batch_size, seq_len, action_dim)
 			mask_flat = mask_expanded.reshape(-1)  # (batch_size * seq_len * action_dim,)
 			
-			# Compute loss (ignore padding with -100)
-			action_classes_flat[~mask_flat] = -100
-			loss = criterion(logits_flat, action_classes_flat)
+			if class_weights is not None:
+				# Apply class weights to loss (same as in train_epoch)
+				# Create weight matrix for each sample
+				weights = torch.ones_like(action_classes_flat, dtype=torch.float)
+				valid_mask = action_classes_flat != -100
+				weights[valid_mask] = class_weights[action_classes_flat[valid_mask]]
+				loss_f = nn.CrossEntropyLoss(weight=class_weights, ignore_index=-100, reduction='none')
+				cls_loss_per_sample = loss_f(logits_flat, action_classes_flat)
+				loss = (cls_loss_per_sample * weights).sum() / weights.sum()
+			else:
+				loss = criterion(logits_flat, action_classes_flat)
 			
 			total_loss += loss.item()
 	
@@ -244,16 +368,26 @@ def validate(model, dataloader, criterion, device):
 	return avg_loss
 
 
-def plot_training_curves(train_losses, val_losses, save_path):
-	fig, ax = plt.subplots(1, 1, figsize=(10, 6))
+def plot_training_curves(train_losses, val_losses, cls_losses, entropy_losses, save_path):
+	fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
 	
-	ax.plot(train_losses, label='Train Loss', linewidth=2)
-	ax.plot(val_losses, label='Val Loss', linewidth=2)
-	ax.set_xlabel('Epoch', fontsize=12)
-	ax.set_ylabel('Loss (Cross-Entropy)', fontsize=12)
-	ax.set_title('Training and Validation Loss', fontsize=14, fontweight='bold')
-	ax.legend(fontsize=11)
-	ax.grid(True, alpha=0.3)
+	# Total loss
+	ax1.plot(train_losses, label='Train Loss', linewidth=2)
+	ax1.plot(val_losses, label='Val Loss', linewidth=2)
+	ax1.set_xlabel('Epoch', fontsize=12)
+	ax1.set_ylabel('Loss', fontsize=12)
+	ax1.set_title('Training and Validation Loss', fontsize=14, fontweight='bold')
+	ax1.legend(fontsize=11)
+	ax1.grid(True, alpha=0.3)
+	
+	# Component losses
+	ax2.plot(cls_losses, label='Classification Loss', linewidth=2)
+	ax2.plot(entropy_losses, label='Entropy Loss', linewidth=2)
+	ax2.set_xlabel('Epoch', fontsize=12)
+	ax2.set_ylabel('Loss', fontsize=12)
+	ax2.set_title('Loss Components', fontsize=14, fontweight='bold')
+	ax2.legend(fontsize=11)
+	ax2.grid(True, alpha=0.3)
 	
 	plt.tight_layout()
 	plt.savefig(save_path, dpi=300, bbox_inches='tight')
@@ -307,6 +441,12 @@ def main():
 					   help='Hidden dimension for observation embedding MLP (default: 256)')
 	parser.add_argument('--obs-embed-layers', type=int, default=2,
 					   help='Number of layers in observation embedding MLP (default: 2)')
+	parser.add_argument('--use-class-weights', action='store_true',
+					   help='Use class weights to handle class imbalance')
+	parser.add_argument('--entropy-weight', type=float, default=0.01,
+					   help='Entropy regularization weight (default: 0.01). Set to 0 to disable.')
+	parser.add_argument('--easy', action='store_true',
+					   help='Easy mode: only use arm state + AB rod states, xyz movement + gripper control')
 	
 	args = parser.parse_args()
 	
@@ -348,7 +488,8 @@ def main():
 		pad=not args.no_pad,
 		normalize_observations=True,
 		obs_mean=None,
-		obs_std=None
+		obs_std=None,
+		easy=args.easy
 	)
 	
 	print(f"\nLoading validation data from: {val_dir}")
@@ -357,7 +498,8 @@ def main():
 		pad=not args.no_pad,
 		normalize_observations=True,
 		obs_mean=train_dataset.obs_mean,
-		obs_std=train_dataset.obs_std
+		obs_std=train_dataset.obs_std,
+		easy=args.easy
 	)
 	
 	if len(train_dataset) == 0:
@@ -429,6 +571,14 @@ def main():
 	print(f"  Total: {total_params:,}")
 	print(f"  Trainable: {trainable_params:,}")
 	
+	# Compute class weights if requested
+	class_weights = None
+	if args.use_class_weights:
+		print("\n" + "="*60)
+		print("Computing class weights...")
+		print("="*60)
+		class_weights = compute_class_weights(train_dataset)
+	
 	# Cross-Entropy Loss with ignore_index for padding
 	criterion = nn.CrossEntropyLoss(ignore_index=-100)
 	optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
@@ -437,9 +587,14 @@ def main():
 	print("\n" + "="*60)
 	print("Starting training...")
 	print("="*60)
+	print(f"\nTraining configuration:")
+	print(f"  Use class weights: {args.use_class_weights}")
+	print(f"  Entropy regularization weight: {args.entropy_weight}")
 	
 	train_losses = []
 	val_losses = []
+	cls_losses = []
+	entropy_losses = []
 	best_val_loss = float('inf')
 	patience_counter = 0
 	best_epoch = 0
@@ -452,19 +607,22 @@ def main():
 		print(f"\nEpoch {epoch}/{args.epochs}")
 		print("-" * 60)
 		
-		train_loss = train_epoch(
-			model, train_loader, optimizer, criterion, device, epoch, args.epochs
+		train_loss, cls_loss, entropy_loss = train_epoch(
+			model, train_loader, optimizer, criterion, device, epoch, args.epochs,
+			class_weights=class_weights, entropy_weight=args.entropy_weight
 		)
 		train_losses.append(train_loss)
+		cls_losses.append(cls_loss)
+		entropy_losses.append(entropy_loss)
 		
-		val_loss = validate(model, val_loader, criterion, device)
+		val_loss = validate(model, val_loader, criterion, device, class_weights=class_weights)
 		val_losses.append(val_loss)
 		
 		scheduler.step()
 		current_lr = optimizer.param_groups[0]['lr']
 		
 		print(f"\nEpoch {epoch}/{args.epochs} Summary:")
-		print(f"  Train Loss: {train_loss:.6f}")
+		print(f"  Train Loss: {train_loss:.6f} (cls: {cls_loss:.6f}, ent: {entropy_loss:.6f})")
 		print(f"  Val Loss: {val_loss:.6f}")
 		print(f"  Learning Rate: {current_lr:.6f}")
 		
@@ -486,7 +644,8 @@ def main():
 				'action_dim': action_dim,
 				'max_seq_len': max_seq_len,
 				'obs_mean': train_dataset.obs_mean.tolist() if train_dataset.obs_mean is not None else None,
-				'obs_std': train_dataset.obs_std.tolist() if train_dataset.obs_std is not None else None
+				'obs_std': train_dataset.obs_std.tolist() if train_dataset.obs_std is not None else None,
+				'class_weights': class_weights.tolist() if class_weights is not None else None
 			}, best_model_path)
 			print(f"  ✓ Best model saved (val_loss: {best_val_loss:.6f})")
 		else:
@@ -514,12 +673,13 @@ def main():
 		'action_dim': action_dim,
 		'max_seq_len': max_seq_len,
 		'obs_mean': train_dataset.obs_mean.tolist() if train_dataset.obs_mean is not None else None,
-		'obs_std': train_dataset.obs_std.tolist() if train_dataset.obs_std is not None else None
+		'obs_std': train_dataset.obs_std.tolist() if train_dataset.obs_std is not None else None,
+		'class_weights': class_weights.tolist() if class_weights is not None else None
 	}, final_model_path)
 	print(f"\nFinal model saved: {final_model_path}")
 	
 	plot_path = os.path.join(args.save_dir, 'training_curves.png')
-	plot_training_curves(train_losses, val_losses, plot_path)
+	plot_training_curves(train_losses, val_losses, cls_losses, entropy_losses, plot_path)
 	
 	print("\n" + "="*60)
 	print("Training completed!")

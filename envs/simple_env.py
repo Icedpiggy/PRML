@@ -18,12 +18,13 @@ class SimpleRodEnv:
 	CTR_MAX = ROD_L * (1.0 + TOL)  # Max center distance for connection
 	BND_R = 2.0  # Boundary radius (m)
 	
-	def __init__(self, render=True, verbose=False, debug=False, show_bnd=False, randomize=False, hard=False):
+	def __init__(self, render=True, verbose=False, debug=False, show_bnd=False, randomize=False, hard=False, easy=False):
 		self.render = render
 		self.verbose = verbose
 		self.show_bnd = show_bnd
 		self.randomize = randomize
 		self.hard = hard
+		self.easy = easy
 		seed = int(time.time_ns())
 		self.rng = np.random.default_rng(seed)
 		if self.verbose:
@@ -49,6 +50,9 @@ class SimpleRodEnv:
 		if self.show_bnd:
 			self._create_bnd_marker()
 		
+		if self.verbose:
+			print(f"Easy mode: {'enabled' if self.easy else 'disabled'}")
+		
 		self.reset()
 	
 	def _create_rod(self, color, pos, length=ROD_L, mass=ROD_M, orn=[0, 0, 0, 1]):
@@ -60,6 +64,10 @@ class SimpleRodEnv:
 		return rod_id
 	
 	def _create_walls(self):
+		# In easy mode, don't create walls or target
+		if self.easy:
+			return None, None
+		
 		he = [0.5, 0.02, 0.5]
 		wv = p.createVisualShape(p.GEOM_BOX, halfExtents=he, rgbaColor=[0.7, 0.7, 0.7, 1])
 		wc = p.createCollisionShape(p.GEOM_BOX, halfExtents=he)
@@ -183,15 +191,25 @@ class SimpleRodEnv:
 		if self.conn and self.comb:
 			pos, orn = p.getBasePositionAndOrientation(self.comb)
 			vel, ang_v = p.getBaseVelocity(self.comb)
-			return np.array(list(pos) + list(orn) + list(vel) + list(ang_v) +
-						  list(pos) + list(orn) + list(vel) + list(ang_v) + list(self.tgt_pos))
+			if self.easy:
+				# In easy mode, don't include target position
+				return np.array(list(pos) + list(orn) + list(vel) + list(ang_v) +
+							  list(pos) + list(orn) + list(vel) + list(ang_v) + [0, 0, 0])
+			else:
+				return np.array(list(pos) + list(orn) + list(vel) + list(ang_v) +
+							  list(pos) + list(orn) + list(vel) + list(ang_v) + list(self.tgt_pos))
 		
 		pos_a, orn_a = p.getBasePositionAndOrientation(self.rod_a)
 		vel_a, ang_a = p.getBaseVelocity(self.rod_a)
 		pos_b, orn_b = p.getBasePositionAndOrientation(self.rod_b)
 		vel_b, ang_b = p.getBaseVelocity(self.rod_b)
-		return np.array(list(pos_a) + list(orn_a) + list(vel_a) + list(ang_a) +
-						list(pos_b) + list(orn_b) + list(vel_b) + list(ang_b) + list(self.tgt_pos))
+		if self.easy:
+			# In easy mode, don't include target position
+			return np.array(list(pos_a) + list(orn_a) + list(vel_a) + list(ang_a) +
+							list(pos_b) + list(orn_b) + list(vel_b) + list(ang_b) + [0, 0, 0])
+		else:
+			return np.array(list(pos_a) + list(orn_a) + list(vel_a) + list(ang_a) +
+							list(pos_b) + list(orn_b) + list(vel_b) + list(ang_b) + list(self.tgt_pos))
 	
 	def step(self, action: np.ndarray) -> Tuple[bool, Dict]:
 		if self.conn and self.comb:
@@ -266,15 +284,19 @@ class SimpleRodEnv:
 							np.array(self.tgt_pos)) < self.TGT_TH
 	
 	def _is_done(self) -> bool:
-		return (self.conn and self._check_hit()) or self._check_bnd_vio()
+		if self.easy:
+			# In easy mode, done when connected
+			return self.conn or self._check_bnd_vio()
+		else:
+			return (self.conn and self._check_hit()) or self._check_bnd_vio()
 	
 	def close(self):
 		p.disconnect()
 
 
-def test_env(show_bnd=False, randomize=False, hard=False):
-	print(f"Init env... (bnd:{'on' if show_bnd else 'off'}, rand:{'on' if randomize else 'off'}, hard:{'on' if hard else 'off'})")
-	env = SimpleRodEnv(render=True, verbose=False, debug=True, show_bnd=show_bnd, randomize=randomize, hard=hard)
+def test_env(show_bnd=False, randomize=False, hard=False, easy=False):
+	print(f"Init env... (bnd:{'on' if show_bnd else 'off'}, rand:{'on' if randomize else 'off'}, hard:{'on' if hard else 'off'}, easy:{'on' if easy else 'off'})")
+	env = SimpleRodEnv(render=True, verbose=False, debug=True, show_bnd=show_bnd, randomize=randomize, hard=hard, easy=easy)
 	step = 0
 	print("Start simulation...")
 	
@@ -314,7 +336,8 @@ if __name__ == "__main__":
 	parser.add_argument('-b', '--show-boundary', action='store_true', help='Show boundary markers')
 	parser.add_argument('-r', '--randomize', action='store_true', help='Randomize initial positions')
 	parser.add_argument('--hard', action='store_true', help='Enable hard mode (rods may be flat)')
+	parser.add_argument('--easy', action='store_true', help='Easy mode: no wall or target, done on connection')
 	
 	args = parser.parse_args()
 	
-	test_env(show_bnd=args.show_boundary, randomize=args.randomize, hard=args.hard)
+	test_env(show_bnd=args.show_boundary, randomize=args.randomize, hard=args.hard, easy=args.easy)

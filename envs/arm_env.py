@@ -40,13 +40,14 @@ class ArmEnv:
 	ROD_COLORS = {'rod_a': [1, 0, 0], 'rod_b': [0, 0, 1], 'comb': [0.5, 0, 0.5]}  # Rod colors
 	DEBUG_LINE_LEN = 0.15  # Debug line extension length
 	
-	def __init__(self, render=True, verbose=False, debug=False, show_bnd=False, randomize=False, hard=False):
+	def __init__(self, render=True, verbose=False, debug=False, show_bnd=False, randomize=False, hard=False, easy=False):
 		self.render = render
 		self.verbose = verbose
 		self.debug = debug
 		self.show_bnd = show_bnd
 		self.randomize = randomize
 		self.hard = hard
+		self.easy = easy
 		seed = int(time.time_ns())
 		self.rng = np.random.default_rng(seed)
 		if self.verbose:
@@ -79,6 +80,9 @@ class ArmEnv:
 		
 		if self.show_bnd:
 			self._create_bnd_marker()
+		
+		if self.verbose:
+			print(f"Easy mode: {'enabled' if self.easy else 'disabled'}")
 		
 		self.reset()
 	
@@ -164,6 +168,10 @@ class ArmEnv:
 		return list(pos) + list(orn) + list(vel) + list(ang_v)
 	
 	def _create_walls(self):
+		# In easy mode, don't create walls or target
+		if self.easy:
+			return None, None
+		
 		he = [0.5, 0.02, 0.5]
 		wv = p.createVisualShape(p.GEOM_BOX, halfExtents=he, rgbaColor=[0.7, 0.7, 0.7, 1])
 		wc = p.createCollisionShape(p.GEOM_BOX, halfExtents=he)
@@ -328,8 +336,13 @@ class ArmEnv:
 		rod_b_state = self._get_rod_state(self.rod_b)
 		rod_c_state = self._get_rod_state(self.comb)
 		
-		return np.array(conn_state + joint_pos + joint_vel + list(end_pos) + list(end_orn) +
-					   rod_a_state + rod_b_state + rod_c_state + list(self.tgt_pos))
+		if self.easy:
+			# In easy mode, don't include target position
+			return np.array(conn_state + joint_pos + joint_vel + list(end_pos) + list(end_orn) +
+						   rod_a_state + rod_b_state + rod_c_state + [0, 0, 0])
+		else:
+			return np.array(conn_state + joint_pos + joint_vel + list(end_pos) + list(end_orn) +
+						   rod_a_state + rod_b_state + rod_c_state + list(self.tgt_pos))
 	
 	def step(self, action: np.ndarray) -> Tuple[bool, Dict]:
 		cur_pos, cur_orn = p.getLinkState(self.arm, self.END_IDX)[:2]
@@ -545,7 +558,11 @@ class ArmEnv:
 							np.array(self.tgt_pos)) < self.TGT_TH
 	
 	def _is_done(self) -> bool:
-		return (self.conn and self._check_hit()) or self._check_bnd_vio()
+		if self.easy:
+			# In easy mode, done when connected
+			return self.conn or self._check_bnd_vio()
+		else:
+			return (self.conn and self._check_hit()) or self._check_bnd_vio()
 	
 	def _update_gripper_helpers(self):
 		if not self.gripper_helpers:
@@ -574,8 +591,8 @@ class ArmEnv:
 		p.disconnect()
 
 
-def test_env(show_bnd=False, randomize=False, debug=False, hard=False):
-	env = ArmEnv(render=True, verbose=False, debug=debug, show_bnd=show_bnd, randomize=randomize, hard=hard)
+def test_env(show_bnd=False, randomize=False, debug=False, hard=False, easy=False):
+	env = ArmEnv(render=True, verbose=False, debug=debug, show_bnd=show_bnd, randomize=randomize, hard=hard, easy=easy)
 	current_view = 'front'
 	
 	print("\nEnvironment initialized!")
@@ -695,8 +712,9 @@ if __name__ == "__main__":
 	parser.add_argument('-b', '--show-boundary', action='store_true', help='Show boundary markers')
 	parser.add_argument('-r', '--randomize', action='store_true', help='Randomize initial positions')
 	parser.add_argument('--hard', action='store_true', help='Enable hard mode (rods may be flat)')
+	parser.add_argument('--easy', action='store_true', help='Easy mode: no wall or target, done on connection')
 	parser.add_argument('-d', '--debug', action='store_true', help='Show debug information')
 	
 	args = parser.parse_args()
 	
-	test_env(show_bnd=args.show_boundary, randomize=args.randomize, hard=args.hard, debug=args.debug)
+	test_env(show_bnd=args.show_boundary, randomize=args.randomize, hard=args.hard, easy=args.easy, debug=args.debug)
