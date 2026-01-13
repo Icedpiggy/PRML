@@ -1,8 +1,4 @@
 #!/usr/bin/env python3
-"""
-Test script for trained Transformer policy network in ArmEnv
-"""
-
 import os
 import argparse
 import pickle
@@ -17,7 +13,6 @@ from envs import ArmEnv
 
 
 class PolicyTester:
-	"""Tester for policy in ArmEnv"""
 	
 	def __init__(self, model, device, pos_speed,
 				 obs_mean, obs_std, obs_dim, action_dim, 
@@ -39,10 +34,6 @@ class PolicyTester:
 		
 		self.model.eval()
 		
-		# History buffer for sequence model
-		self.obs_history = []
-		
-		# Test if input is available
 		import sys
 		self.input_available = sys.stdin.isatty()
 		
@@ -59,44 +50,29 @@ class PolicyTester:
 			self.step_by_step = False
 	
 	def get_action(self, obs):
-		"""Get action from model given current observation"""
-		# Normalize observation
 		obs_normalized = (obs.astype(np.float32) - 
 						 self.obs_mean.astype(np.float32)) / self.obs_std.astype(np.float32)
 		
-		# Convert to tensor
 		obs_tensor = torch.from_numpy(obs_normalized).float().unsqueeze(0).to(self.device)
 		
-		# Update history
 		self.obs_history.append(obs_tensor)
 		if len(self.obs_history) > self.max_seq_len:
 			self.obs_history.pop(0)
 		
-		# Stack observations
 		obs_seq = torch.cat(self.obs_history, dim=1)
 		
-		# Get action logits from model
 		with torch.no_grad():
-			action_logits = self.model(obs_seq)  # (1, seq_len, action_dim, num_classes)
+			action_logits = self.model(obs_seq)
 		
-		# Get logits for the last timestep
-		logits = action_logits[0, -1, :, :]  # (action_dim, num_classes)
+		logits = action_logits[0, -1, :, :]
 		
-		# Get class indices (argmax on logits, deterministic)
-		class_indices = torch.argmax(logits, dim=-1).cpu().numpy()  # (action_dim,)
+		class_indices = torch.argmax(logits, dim=-1).cpu().numpy()
 		
-		# Convert class indices back to continuous action values
-		# Action: 4 dimensions [x, y, z, gripper]
 		action = np.zeros(4, dtype=np.float32)
-		for i in range(4):
-			if i == 3:  # Gripper dimension
-				# Class 0 -> -1.0 (close), Class 1 -> 0, Class 2 -> 1.0 (open)
-				action[i] = class_indices[i] - 1.0
-			else:  # Position dimensions (0, 1, 2)
-				# Class 0 -> -pos_speed, Class 1 -> 0, Class 2 -> +pos_speed
-				action[i] = (class_indices[i] - 1) * self.pos_speed
 		
-		# Store debug info for later display
+		action[0:3] = (class_indices[0:3] - 1) * self.pos_speed
+		action[3] = class_indices[3] - 1.0
+		
 		self.last_debug_info = {
 			'seq_len': obs_seq.shape[1],
 			'logits_range': (float(logits.min()), float(logits.max())),
@@ -110,11 +86,9 @@ class PolicyTester:
 		return action
 	
 	def reset_history(self):
-		"""Reset observation history"""
 		self.obs_history = []
 	
 	def test_episode(self, env, max_steps=2000, view='front', render=True):
-		"""Test model on one episode"""
 		self.reset_history()
 		
 		if render:
@@ -131,7 +105,7 @@ class PolicyTester:
 			print("="*80)
 			print("  Press Enter after each step to continue")
 			print("  Type 'skip' to run continuously")
-			print("  Type 'q' to quit the episode")
+			print("  Type 'q' to quit episode")
 			print("="*80)
 		
 		if self.debug:
@@ -142,7 +116,6 @@ class PolicyTester:
 			print(f"Observation dimension: {len(obs)}")
 		
 		try:
-			# Create progress bar (disable in step-by-step mode)
 			pbar = tqdm(range(max_steps), desc="Episode", 
 					   disable=self.step_by_step,
 					   unit="step")
@@ -227,32 +200,26 @@ class PolicyTester:
 				
 				info_history.append(info.copy())
 				
-				# Update progress bar with info
 				if not self.step_by_step:
 					debug_info = self.last_debug_info
 					
-					# Format info for progress bar
 					postfix = []
 					postfix.append(f"height={info['reached_height']}")
 					postfix.append(f"bnd={info['bnd_vio']}")
 					
 					if self.debug:
-						# Show detailed debug info in debug mode
 						postfix.append(f"pos=({debug_info['pos_delta'][0]:.2f},{debug_info['pos_delta'][1]:.2f},{debug_info['pos_delta'][2]:.2f})")
 						postfix.append(f"grip={debug_info['gripper_cmd']:.1f}")
 						postfix.append(f"seq={debug_info['seq_len']}")
-						# Format class indices
 						classes_str = ''.join(map(str, debug_info['class_indices']))
 						postfix.append(f"cls={classes_str}")
 					else:
-						# Show basic info in normal mode
 						postfix.append(f"grip={debug_info['gripper_cmd']:.1f}")
 						postfix.append(f"seq={debug_info['seq_len']}")
 					
 					pbar.set_postfix_str(' '.join(postfix))
 				
 				if self.step_by_step and not done:
-					# Wait for user input in step-by-step mode
 					print(f"\n{'='*80}")
 					try:
 						user_input = input("Press Enter to continue (or type 'skip'/'q'): ")
@@ -263,7 +230,6 @@ class PolicyTester:
 							print("\n[INFO] Quitting episode...")
 							break
 					except (EOFError, KeyboardInterrupt):
-						# Handle non-interactive environments or Ctrl+C
 						print("\n[ERROR] Input not available!")
 						print("[ERROR] Switching to continuous mode...")
 						self.step_by_step = False
@@ -313,7 +279,6 @@ class PolicyTester:
 def test_model(env_config, model_path, device, num_episodes=10, max_steps=2000,
 				view='front', debug=False, show_boundary=False, speed=1.0,
 				step_by_step=False, render=True, seed=None):
-	"""Test model in environment"""
 	
 	print("\n" + "="*60)
 	print("Loading model...")
@@ -329,7 +294,6 @@ def test_model(env_config, model_path, device, num_episodes=10, max_steps=2000,
 	action_dim = checkpoint['action_dim']
 	max_seq_len = checkpoint['max_seq_len']
 	
-	# Get pos_speed from checkpoint or use default
 	pos_speed = 0.5
 	
 	obs_mean = np.array(checkpoint['obs_mean']) if checkpoint['obs_mean'] is not None else None
@@ -338,7 +302,6 @@ def test_model(env_config, model_path, device, num_episodes=10, max_steps=2000,
 	if obs_mean is None or obs_std is None:
 		print("\nWarning: Observation normalization statistics not found in checkpoint!")
 		print("Model was trained without observation normalization.")
-		# Use identity normalization (mean=0, std=1) as numpy arrays
 		obs_mean = np.zeros((1, obs_dim), dtype=np.float32)
 		obs_std = np.ones((1, obs_dim), dtype=np.float32)
 	
@@ -359,7 +322,6 @@ def test_model(env_config, model_path, device, num_episodes=10, max_steps=2000,
 	print("Creating model...")
 	print("="*60)
 	
-	# Get obs_embed parameters from checkpoint or use defaults
 	obs_embed_hidden = checkpoint['args'].get('obs_embed_hidden', 256)
 	obs_embed_layers = checkpoint['args'].get('obs_embed_layers', 2)
 	
@@ -406,8 +368,13 @@ def test_model(env_config, model_path, device, num_episodes=10, max_steps=2000,
 		print(f"Episode {episode + 1}/{num_episodes}")
 		print(f"{'='*60}")
 		
+		if seed is None:
+			episode_seed = None
+		else:
+			episode_seed = seed + episode
+		
 		env = ArmEnv(render=render, verbose=False, debug=debug, 
-					show_bnd=show_boundary, seed=seed, **env_config)
+					show_bnd=show_boundary, seed=episode_seed, **env_config)
 		
 		result = tester.test_episode(env, max_steps=max_steps, view=view, render=render)
 		results.append(result)
@@ -426,7 +393,6 @@ def test_model(env_config, model_path, device, num_episodes=10, max_steps=2000,
 		if episode < num_episodes - 1 and render:
 			input("\nPress Enter to continue to next episode (or Ctrl+C to exit)...")
 	
-	# Calculate statistics
 	success_rate = np.mean([r['success'] for r in results])
 	avg_steps = np.mean([r['steps'] for r in results])
 	height_rate = np.mean([r['reached_height'] for r in results])
@@ -456,7 +422,6 @@ def test_model(env_config, model_path, device, num_episodes=10, max_steps=2000,
 
 
 def plot_success_rates(results_by_mode, save_path):
-	"""Plot success rates for different environment modes"""
 	modes = list(results_by_mode.keys())
 	success_rates = [r['success_rate'] for r in results_by_mode.values()]
 	
@@ -471,7 +436,6 @@ def plot_success_rates(results_by_mode, save_path):
 	ax.set_ylim([0, 1.05])
 	ax.grid(True, alpha=0.3, axis='y')
 	
-	# Add percentage labels on bars
 	for bar, rate in zip(bars, success_rates):
 		height = bar.get_height()
 		ax.text(bar.get_x() + bar.get_width()/2., height,
@@ -543,7 +507,6 @@ Examples:
 	
 	os.makedirs(args.save_dir, exist_ok=True)
 	
-	# Test configurations
 	if args.all_modes:
 		test_configs = [
 			{'name': 'default', 'randomize': False},
@@ -587,14 +550,12 @@ Examples:
 		if results is not None:
 			all_results[config['name']] = results
 			
-			# Save results for this mode
 			mode_save_path = os.path.join(args.save_dir, f"{config['name']}_results.log")
 			with open(mode_save_path, 'w') as f:
 				f.write("="*60 + "\n")
 				f.write(f"Test Results - Mode: {config['name']}\n")
 				f.write("="*60 + "\n\n")
 				
-				# Write model info
 				f.write("Model Information:\n")
 				f.write("-"*40 + "\n")
 				model_info = results['model_info']
@@ -603,7 +564,6 @@ Examples:
 				f.write(f"  Val Loss: {model_info['val_loss']:.6f}\n")
 				f.write(f"  Total Parameters: {model_info['total_params']:,}\n\n")
 				
-				# Write overall statistics
 				f.write("Overall Statistics:\n")
 				f.write("-"*40 + "\n")
 				f.write(f"  Success Rate: {results['success_rate']:.2%}\n")
@@ -611,7 +571,6 @@ Examples:
 				f.write(f"  Height Reached Rate: {results['height_rate']:.2%}\n")
 				f.write(f"  Boundary Violation Rate: {results['violation_rate']:.2%}\n\n")
 				
-				# Write episode-by-episode results
 				f.write("Episode Results:\n")
 				f.write("-"*40 + "\n")
 				for i, ep_result in enumerate(results['episode_results']):
@@ -629,12 +588,10 @@ Examples:
 			
 			print(f"\nResults for {config['name']} mode saved to: {mode_save_path}")
 	
-	# Plot success rates if multiple modes tested
 	if len(all_results) > 1:
 		plot_path = os.path.join(args.save_dir, 'success_rates.png')
 		plot_success_rates(all_results, plot_path)
 		
-		# Save all results together
 		all_results_path = os.path.join(args.save_dir, 'all_results.log')
 		with open(all_results_path, 'w') as f:
 			f.write("="*60 + "\n")

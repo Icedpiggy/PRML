@@ -6,23 +6,23 @@ from typing import Tuple, Dict
 
 
 class ArmEnv:
-	ROD_L = 0.2  # Rod length (m)
-	ROD_R = 0.02  # Rod radius (m)
-	ROD_M = 0.25  # Rod mass (kg)
-	TGT_HEIGHT = 0.5 # Target height (m) - rod center should reach this height
-	BND_R = 1.0  # Boundary radius (m)
+	ROD_L = 0.2
+	ROD_R = 0.02
+	ROD_M = 0.25
+	TGT_HEIGHT = 0.5
+	BND_R = 1.0
 	
-	NUM_ARM_JOINTS = 7  # Number of arm joints
-	NUM_MOVABLE_JOINTS = 9  # Number of movable joints (arm + gripper)
-	END_IDX = 11  # End-effector link index
-	GRIPPER_JOINTS = [9, 10]  # Gripper joint indices
-	INIT_JOINTS = [0, -0.785, 0, -2.356, 0, 1.571, 0]  # Initial joint positions
-	GRIPPER_OPEN = 0.04  # Gripper open position
-	GRIPPER_CLOSED = 0.0  # Gripper closed position
+	NUM_ARM_JOINTS = 7
+	NUM_MOVABLE_JOINTS = 9
+	END_IDX = 11
+	GRIPPER_JOINTS = [9, 10]
+	INIT_JOINTS = [0, -0.785, 0, -2.356, 0, 1.571, 0]
+	GRIPPER_OPEN = 0.04
+	GRIPPER_CLOSED = 0.0
 	
-	MAX_POS_STEP = 0.02  # Max position step per action
-	JOINT_FORCE = 500  # Joint motor force
-	GRIPPER_FORCE = 300  # Gripper motor force
+	MAX_POS_STEP = 0.02
+	JOINT_FORCE = 500
+	GRIPPER_FORCE = 300
 	
 	CAMERA_CONFIGS = {
 		'front': {'distance': 1.5, 'yaw': 0, 'pitch': -30, 'target': [0, 0, 0.3]},
@@ -190,7 +190,6 @@ class ArmEnv:
 			print(f"  end_orn length: {len(list(end_orn))}")
 			print(f"  rod state length: {len(list(rod_pos) + list(rod_orn) + list(rod_vel) + list(rod_ang_v))}")
 		
-		# obs: joint_pos (9) + joint_vel (9) + end_pos (3) + end_orn (4) + rod_state (13) = 38
 		obs = np.array(joint_pos + joint_vel + list(end_pos) + list(end_orn) +
 					  list(rod_pos) + list(rod_orn) + list(rod_vel) + list(rod_ang_v))
 		

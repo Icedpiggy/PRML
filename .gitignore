@@ -1,4 +1,5 @@
 __pycache__
 temp
-trajectory_*
-checkpoint_epoch_*
+*.pkl
+*.pth
+*.png

@@ -34,11 +34,10 @@ class TransformerPolicy(nn.Module):
 		self.action_dim = action_dim
 		self.d_model = d_model
 		self.max_seq_len = max_seq_len
-		self.num_classes = num_classes  # Number of discrete actions per dimension
+		self.num_classes = num_classes
 		self.obs_embed_hidden = obs_embed_hidden
 		self.obs_embed_layers = obs_embed_layers
 		
-		# Multi-layer MLP for observation embedding
 		obs_embed_layers_list = []
 		if obs_embed_layers == 1:
 			obs_embed_layers_list.append(nn.Linear(obs_dim, d_model))
@@ -50,7 +49,7 @@ class TransformerPolicy(nn.Module):
 				nn.Dropout(dropout),
 				nn.Linear(obs_embed_hidden, d_model)
 			])
-		else:  # 3 or more layers
+		else:
 			obs_embed_layers_list.append(nn.Linear(obs_dim, obs_embed_hidden))
 			obs_embed_layers_list.append(nn.GELU())
 			obs_embed_layers_list.append(nn.LayerNorm(obs_embed_hidden))
@@ -77,8 +76,6 @@ class TransformerPolicy(nn.Module):
 			num_layers=num_layers
 		)
 		
-		# Output: (batch, seq_len, action_dim * num_classes)
-		# We'll reshape to (batch, seq_len, action_dim, num_classes) for softmax
 		self.action_head = nn.Linear(d_model, action_dim * num_classes)
 		
 		self._init_weights()
@@ -100,10 +97,8 @@ class TransformerPolicy(nn.Module):
 		
 		x = self.transformer_encoder(x, mask=causal_mask)
 		
-		# Output logits for each action dimension and class
-		logits = self.action_head(x)  # (batch, seq_len, action_dim * num_classes)
+		logits = self.action_head(x)
 		
-		# Reshape to (batch, seq_len, action_dim, num_classes)
 		logits = logits.view(batch_size, seq_len, self.action_dim, self.num_classes)
 		
 		return logits
@@ -121,7 +116,7 @@ class TransformerPolicy(nn.Module):
 				obs_history = obs_history.unsqueeze(0)
 			
 			logits = self.forward(obs_history)
-			class_indices = torch.argmax(logits[0, -1, :, :], dim=-1)  # (action_dim,)
+			class_indices = torch.argmax(logits[0, -1, :, :], dim=-1)
 		
 		if was_training:
 			self.train()

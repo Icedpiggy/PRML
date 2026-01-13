@@ -6,11 +6,11 @@ from typing import Tuple, Dict
 
 
 class SimpleRodEnv:
-	ROD_L = 0.2  # Rod length (m)
-	ROD_R = 0.02  # Rod radius (m)
-	ROD_M = 0.25  # Rod mass (kg)
-	TGT_HEIGHT = 0.5  # Target height (m) - rod center should reach this height
-	BND_R = 1.0  # Boundary radius (m)
+	ROD_L = 0.2
+	ROD_R = 0.02
+	ROD_M = 0.25
+	TGT_HEIGHT = 0.5
+	BND_R = 1.0
 	
 	def __init__(self, render=True, verbose=False, debug=False, show_bnd=False, randomize=False, seed=None):
 		self.render = render
@@ -68,7 +68,6 @@ class SimpleRodEnv:
 			p.createMultiBody(baseMass=0, baseVisualShapeIndex=bv, basePosition=[x, y, z], baseOrientation=q)
 	
 	def _create_target_marker(self):
-		# Create a translucent plane at target height
 		tv = p.createVisualShape(p.GEOM_BOX, halfExtents=[self.BND_R, self.BND_R, 0.01], 
 							   rgbaColor=[1, 1, 0, 0.3])
 		self.tgt_id = p.createMultiBody(baseMass=0, baseVisualShapeIndex=tv, 
@@ -91,7 +90,7 @@ class SimpleRodEnv:
 		return [self.rng.uniform(*x_rng), self.rng.uniform(*y_rng), z]
 	
 	def _rand_orn(self):
-		return [0, 0, 0, 1]  # Default upright orientation
+		return [0, 0, 0, 1]
 	
 	def reset(self):
 		if self.rod is not None:
