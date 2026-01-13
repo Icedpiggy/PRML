@@ -340,7 +340,7 @@ def test_model(env_config, model_path, device, num_episodes=10, max_steps=5000,
 		print(f"Episode {episode + 1}/{num_episodes}")
 		print(f"{'='*60}")
 		
-		env = ArmEnv(render=True, verbose=True, debug=debug, 
+		env = ArmEnv(render=True, verbose=False, debug=debug, 
 					show_bnd=show_boundary, **env_config)
 		
 		result = tester.test_episode(env, max_steps=max_steps, view=view)

@@ -142,7 +142,7 @@ class TrajectoryDataset(Dataset):
 				obs_seq = (obs_seq.astype(np.float32) - 
 						  self.obs_mean.astype(np.float32)) / self.obs_std.astype(np.float32)
 			
-			eps = 1e-6
+			eps = 1e-2
 			action_classes = np.where(action_seq > eps, 2, np.where(action_seq < -eps, 0, 1))
 			
 			if self.pad and self.max_seq_len:
@@ -581,7 +581,7 @@ def main():
 	
 	# Cross-Entropy Loss with ignore_index for padding
 	criterion = nn.CrossEntropyLoss(ignore_index=-100)
-	optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
+	optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=0.1)
 	scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-5)
 	
 	print("\n" + "="*60)

@@ -563,6 +563,10 @@ class ArmEnv:
 		return False
 	
 	def _check_hit(self) -> bool:
+		# In easy mode, no target exists, so hit is always False
+		if self.easy:
+			return False
+		
 		if self.conn and self.comb:
 			ends = self._get_ends(self.comb, self.COMB_L)
 			return min(np.linalg.norm(e - np.array(self.tgt_pos)) for e in ends) < self.TGT_TH
