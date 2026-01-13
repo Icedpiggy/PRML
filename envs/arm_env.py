@@ -330,17 +330,31 @@ class ArmEnv:
 		
 		end_pos, end_orn = p.getLinkState(self.arm, self.END_IDX)[:2]
 		
-		conn_state = [1.0] if self.conn else [0.0]
-		
 		rod_a_state = self._get_rod_state(self.rod_a)
 		rod_b_state = self._get_rod_state(self.rod_b)
 		rod_c_state = self._get_rod_state(self.comb)
 		
+		if self.verbose:
+			print(f"Debug get_obs:")
+			print(f"  joint_pos length: {len(joint_pos)}")
+			print(f"  joint_vel length: {len(joint_vel)}")
+			print(f"  end_pos length: {len(list(end_pos))}")
+			print(f"  end_orn length: {len(list(end_orn))}")
+			print(f"  rod_a_state length: {len(rod_a_state)}")
+			print(f"  rod_b_state length: {len(rod_b_state)}")
+			print(f"  rod_c_state length: {len(rod_c_state)}")
+		
 		if self.easy:
-			# In easy mode, don't include target position
-			return np.array(conn_state + joint_pos + joint_vel + list(end_pos) + list(end_orn) +
-						   rod_a_state + rod_b_state + rod_c_state + [0, 0, 0])
+			# In easy mode, return: joint_pos (9) + joint_vel (9) + end_pos (3) + end_orn (4) + rod_a (13) + rod_b (13) = 51
+			# Include all joints: 7 arm + 2 gripper = 9 joints
+			obs = np.array(joint_pos + joint_vel + list(end_pos) + list(end_orn) +
+						   rod_a_state + rod_b_state)
+			if self.verbose:
+				print(f"  Easy mode obs length: {len(obs)}")
+			return obs
 		else:
+			# Normal mode: return full 64-dimensional observation
+			conn_state = [1.0] if self.conn else [0.0]
 			return np.array(conn_state + joint_pos + joint_vel + list(end_pos) + list(end_orn) +
 						   rod_a_state + rod_b_state + rod_c_state + list(self.tgt_pos))
 	

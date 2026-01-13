@@ -113,14 +113,14 @@ class TrajectoryDataset(Dataset):
 			return None, None
 		
 		# Observations to keep:
-		# - Indices 1-7: joint positions (7 values)
-		# - Indices 8-14: joint velocities (7 values)
-		# - Indices 15-17: end-effector position (3 values)
-		# - Indices 18-21: end-effector orientation (4 values)
-		# - Indices 22-34: rod A state (13 values)
-		# - Indices 35-47: rod B state (13 values)
-		# Total: 7 + 7 + 3 + 4 + 13 + 13 = 47 values
-		obs_filtered = obs_seq[:, 1:48]
+		# - Indices 1-9: joint positions (9 values, 7 arm + 2 gripper)
+		# - Indices 10-18: joint velocities (9 values, 7 arm + 2 gripper)
+		# - Indices 19-21: end-effector position (3 values)
+		# - Indices 22-25: end-effector orientation (4 values)
+		# - Indices 26-38: rod A state (13 values)
+		# - Indices 39-51: rod B state (13 values)
+		# Total: 9 + 9 + 3 + 4 + 13 + 13 = 51 values
+		obs_filtered = obs_seq[:, 1:52]
 		
 		# Actions to keep:
 		# - Indices 0-2: xyz movement
