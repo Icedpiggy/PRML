@@ -277,8 +277,9 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch, total_ep
 				action_dim = class_weights.shape[0]
 				samples_per_dim = num_samples // action_dim
 				
-				# Create dimension indices: [0,0,...,0, 1,1,...,1, 2,2,...,2, 3,3,...,3]
-				dim_indices = torch.arange(action_dim, device=device).unsqueeze(1).expand(1, samples_per_dim).reshape(-1)
+				# Create dimension indices: [0,1,2,3, 0,1,2,3, 0,1,2,3, ...]
+				# Pattern repeats for each batch of action_dim samples
+				dim_indices = torch.arange(action_dim, device=device).unsqueeze(1).expand(-1, samples_per_dim).reshape(-1)
 				
 				# Get weights based on dimension and class
 				weights = torch.ones_like(action_classes_flat, dtype=torch.float)
@@ -377,8 +378,9 @@ def validate(model, dataloader, criterion, device, class_weights=None):
 					action_dim = class_weights.shape[0]
 					samples_per_dim = num_samples // action_dim
 					
-					# Create dimension indices: [0,0,...,0, 1,1,...,1, 2,2,...,2, 3,3,...,3]
-					dim_indices = torch.arange(action_dim, device=device).unsqueeze(1).expand(1, samples_per_dim).reshape(-1)
+					# Create dimension indices: [0,1,2,3, 0,1,2,3, 0,1,2,3, ...]
+					# Pattern repeats for each batch of action_dim samples
+					dim_indices = torch.arange(action_dim, device=device).unsqueeze(1).expand(-1, samples_per_dim).reshape(-1)
 					
 					# Get weights based on dimension and class
 					weights = torch.ones_like(action_classes_flat, dtype=torch.float)
@@ -577,7 +579,7 @@ def main():
 	
 	sample_action = train_dataset[0]['actions']
 	action_dim = sample_action.shape[-1]
-	max_seq_len = train_dataset.max_seq_len
+	max_seq_len = 2000
 	
 	print(f"\nModel configuration:")
 	print(f"  Observation dimension: {obs_dim}")
@@ -670,6 +672,7 @@ def main():
 		print(f"  Val Loss: {val_loss:.6f}")
 		print(f"  Learning Rate: {current_lr:.6f}")
 		
+		# Save best model
 		if val_loss < best_val_loss - args.early_stopping_delta:
 			best_val_loss = val_loss
 			best_epoch = epoch
@@ -703,6 +706,26 @@ def main():
 				print(f"  Best validation loss: {best_val_loss:.6f} at epoch {best_epoch}")
 				print(f"{'='*60}")
 				break
+		
+		if epoch % 100 == 0:
+			checkpoint_path = os.path.join(args.save_dir, f'checkpoint_epoch_{epoch}.pth')
+			torch.save({
+				'epoch': epoch,
+				'model_state_dict': model.state_dict(),
+				'optimizer_state_dict': optimizer.state_dict(),
+				'scheduler_state_dict': scheduler.state_dict(),
+				'train_loss': train_loss,
+				'val_loss': val_loss,
+				'args': vars(args),
+				'obs_dim': obs_dim,
+				'action_dim': action_dim,
+				'max_seq_len': max_seq_len,
+				'obs_mean': train_dataset.obs_mean.tolist() if train_dataset.obs_mean is not None else None,
+				'obs_std': train_dataset.obs_std.tolist() if train_dataset.obs_std is not None else None,
+				'class_weights': class_weights.tolist() if class_weights is not None else None
+			}, checkpoint_path)
+			print(f"  ✓ Checkpoint saved (epoch {epoch})")
+		
 	
 	final_model_path = os.path.join(args.save_dir, 'final_model.pth')
 	torch.save({

@@ -30,13 +30,15 @@ class ArmEnv:
 		'side': {'distance': 1.5, 'yaw': 90, 'pitch': -30, 'target': [0, 0, 0.3]},
 	}
 	
-	def __init__(self, render=True, verbose=False, debug=False, show_bnd=False, randomize=False):
+	def __init__(self, render=True, verbose=False, debug=False, show_bnd=False, randomize=False, seed=None):
 		self.render = render
 		self.verbose = verbose
 		self.debug = debug
 		self.show_bnd = show_bnd
 		self.randomize = randomize
-		seed = int(time.time_ns())
+		if seed is None:
+			seed = int(time.time_ns())
+		self.seed = seed
 		self.rng = np.random.default_rng(seed)
 		self.gripper_helpers = {}
 		if self.verbose:
@@ -250,8 +252,8 @@ class ArmEnv:
 		p.disconnect()
 
 
-def test_env(show_bnd=False, randomize=False, debug=False):
-	env = ArmEnv(render=True, verbose=False, debug=debug, show_bnd=show_bnd, randomize=randomize)
+def test_env(show_bnd=False, randomize=False, debug=False, seed=None):
+	env = ArmEnv(render=True, verbose=False, debug=debug, show_bnd=show_bnd, randomize=randomize, seed=seed)
 	current_view = 'front'
 	
 	print("\nEnvironment initialized!")
@@ -345,7 +347,8 @@ if __name__ == "__main__":
 	parser.add_argument('-d', '--debug', action='store_true', help='Show debug info')
 	parser.add_argument('-b', '--show-boundary', action='store_true', help='Show boundary markers')
 	parser.add_argument('-r', '--randomize', action='store_true', help='Randomize initial positions')
+	parser.add_argument('-s', '--seed', type=int, default=None, help='Random seed (default: random)')
 	
 	args = parser.parse_args()
 	
-	test_env(show_bnd=args.show_boundary, randomize=args.randomize, debug=args.debug)
+	test_env(show_bnd=args.show_boundary, randomize=args.randomize, debug=args.debug, seed=args.seed)

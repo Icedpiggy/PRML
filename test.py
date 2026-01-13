@@ -22,7 +22,7 @@ class PolicyTester:
 	def __init__(self, model, device, pos_speed,
 				 obs_mean, obs_std, obs_dim, action_dim, 
 				 max_seq_len, debug=False, show_boundary=False, 
-				 speed=1.0, no_op_threshold=50, step_by_step=False):
+				 speed=1.0, render=True, step_by_step=False):
 		self.model = model
 		self.device = device
 		self.pos_speed = pos_speed
@@ -34,16 +34,13 @@ class PolicyTester:
 		self.debug = debug
 		self.show_boundary = show_boundary
 		self.speed = speed
-		self.no_op_threshold = no_op_threshold
+		self.render = render
 		self.step_by_step = step_by_step
 		
 		self.model.eval()
 		
 		# History buffer for sequence model
 		self.obs_history = []
-		
-		# Track consecutive no-op actions
-		self.consecutive_no_ops = 0
 		
 		# Test if input is available
 		import sys
@@ -54,7 +51,6 @@ class PolicyTester:
 		print(f"  Show boundary: {show_boundary}")
 		print(f"  Playback speed: {speed}x")
 		print(f"  Position speed: {pos_speed}")
-		print(f"  No-op threshold: {no_op_threshold} steps")
 		print(f"  Step-by-step mode: {step_by_step}")
 		
 		if step_by_step and not self.input_available:
@@ -89,25 +85,6 @@ class PolicyTester:
 		# Get class indices (argmax on logits, deterministic)
 		class_indices = torch.argmax(logits, dim=-1).cpu().numpy()  # (action_dim,)
 		
-		# Check if all actions are no-op (all class 1)
-		is_no_op = np.all(class_indices == 1)
-		if is_no_op:
-			self.consecutive_no_ops += 1
-		else:
-			self.consecutive_no_ops = 0
-		
-		# If too many consecutive no-ops, force exploration by randomly changing some actions
-		if self.consecutive_no_ops >= self.no_op_threshold:
-			if self.debug:
-				print(f"\n[WARNING] {self.consecutive_no_ops} consecutive no-ops detected! Forcing exploration...")
-			# Randomly pick 2-3 dimensions to change
-			num_dims_to_change = np.random.randint(2, min(4, self.action_dim))
-			dims_to_change = np.random.choice(self.action_dim, num_dims_to_change, replace=False)
-			for dim in dims_to_change:
-				# Randomly choose class 0 or 2 (not 1)
-				class_indices[dim] = np.random.choice([0, 2])
-			self.consecutive_no_ops = 0
-		
 		# Convert class indices back to continuous action values
 		# Action: 4 dimensions [x, y, z, gripper]
 		action = np.zeros(4, dtype=np.float32)
@@ -127,8 +104,7 @@ class PolicyTester:
 			'action': action,
 			'action_norm': float(np.linalg.norm(action)),
 			'pos_delta': action[:3],
-			'gripper_cmd': action[3],
-			'consecutive_no_ops': self.consecutive_no_ops
+			'gripper_cmd': action[3]
 		}
 		
 		return action
@@ -168,7 +144,7 @@ class PolicyTester:
 		try:
 			# Create progress bar (disable in step-by-step mode)
 			pbar = tqdm(range(max_steps), desc="Episode", 
-					   disable=not self.debug or self.step_by_step,
+					   disable=self.step_by_step,
 					   unit="step")
 			
 			for step in pbar:
@@ -239,9 +215,6 @@ class PolicyTester:
 						print(f"\n[5] Model Output:")
 						print(f"  Logits range: [{debug_info['logits_range'][0]:.2f}, {debug_info['logits_range'][1]:.2f}]")
 						print(f"  Sequence length: {debug_info['seq_len']}")
-						print(f"  Consecutive no-ops: {debug_info['consecutive_no_ops']}")
-						if debug_info['consecutive_no_ops'] >= 10:
-							print(f"  WARNING: High no-op count!")
 				
 				done, info = env.step(action)
 				
@@ -254,22 +227,27 @@ class PolicyTester:
 				
 				info_history.append(info.copy())
 				
-				# Update progress bar with debug info
-				if self.debug and not self.step_by_step:
+				# Update progress bar with info
+				if not self.step_by_step:
 					debug_info = self.last_debug_info
 					
-					# Format debug info for progress bar
+					# Format info for progress bar
 					postfix = []
 					postfix.append(f"height={info['reached_height']}")
 					postfix.append(f"bnd={info['bnd_vio']}")
-					postfix.append(f"pos=({debug_info['pos_delta'][0]:.2f},{debug_info['pos_delta'][1]:.2f},{debug_info['pos_delta'][2]:.2f})")
-					postfix.append(f"grip={debug_info['gripper_cmd']:.1f}")
-					postfix.append(f"seq={debug_info['seq_len']}")
-					postfix.append(f"no_op={debug_info['consecutive_no_ops']}")
 					
-					# Format class indices
-					classes_str = ''.join(map(str, debug_info['class_indices']))
-					postfix.append(f"cls={classes_str}")
+					if self.debug:
+						# Show detailed debug info in debug mode
+						postfix.append(f"pos=({debug_info['pos_delta'][0]:.2f},{debug_info['pos_delta'][1]:.2f},{debug_info['pos_delta'][2]:.2f})")
+						postfix.append(f"grip={debug_info['gripper_cmd']:.1f}")
+						postfix.append(f"seq={debug_info['seq_len']}")
+						# Format class indices
+						classes_str = ''.join(map(str, debug_info['class_indices']))
+						postfix.append(f"cls={classes_str}")
+					else:
+						# Show basic info in normal mode
+						postfix.append(f"grip={debug_info['gripper_cmd']:.1f}")
+						postfix.append(f"seq={debug_info['seq_len']}")
 					
 					pbar.set_postfix_str(' '.join(postfix))
 				
@@ -302,7 +280,8 @@ class PolicyTester:
 						print(f"{'-'*80}")
 					break
 				
-				time.sleep(1./ (self.speed * 60))
+				if self.render:
+					time.sleep(1./ (self.speed * 60))
 			
 			pbar.close()
 			
@@ -333,7 +312,7 @@ class PolicyTester:
 
 def test_model(env_config, model_path, device, num_episodes=10, max_steps=2000,
 				view='front', debug=False, show_boundary=False, speed=1.0,
-				no_op_threshold=50, step_by_step=False, render=True):
+				step_by_step=False, render=True, seed=None):
 	"""Test model in environment"""
 	
 	print("\n" + "="*60)
@@ -407,8 +386,7 @@ def test_model(env_config, model_path, device, num_episodes=10, max_steps=2000,
 		model, device, pos_speed, obs_mean, obs_std,
 		obs_dim, action_dim, max_seq_len, debug=debug, 
 		show_boundary=show_boundary, speed=speed,
-		no_op_threshold=no_op_threshold,
-		step_by_step=step_by_step
+		step_by_step=step_by_step, render=render
 	)
 	
 	print("\n" + "="*60)
@@ -419,6 +397,7 @@ def test_model(env_config, model_path, device, num_episodes=10, max_steps=2000,
 	print(f"  Max steps per episode: {max_steps}")
 	print(f"  View: {view}")
 	print(f"  Render: {render}")
+	print(f"  Seed: {seed if seed is not None else 'Random'}")
 	
 	results = []
 	
@@ -428,7 +407,7 @@ def test_model(env_config, model_path, device, num_episodes=10, max_steps=2000,
 		print(f"{'='*60}")
 		
 		env = ArmEnv(render=render, verbose=False, debug=debug, 
-					show_bnd=show_boundary, **env_config)
+					show_bnd=show_boundary, seed=seed, **env_config)
 		
 		result = tester.test_episode(env, max_steps=max_steps, view=view, render=render)
 		results.append(result)
@@ -546,8 +525,6 @@ Examples:
 					   help='Show boundary markers')
 	parser.add_argument('--speed', type=float, default=1.0,
 					   help='Simulation speed multiplier (default: 1.0)')
-	parser.add_argument('--no-op-threshold', type=int, default=50,
-					   help='Number of consecutive no-ops before forcing exploration (default: 50)')
 	parser.add_argument('--step-by-step', action='store_true',
 					   help='Run step-by-step, waiting for user input after each step')
 	parser.add_argument('--no-render', action='store_true',
@@ -556,6 +533,8 @@ Examples:
 					   help='Directory to save test results')
 	parser.add_argument('--all-modes', action='store_true',
 					   help='Test all environment modes (default, randomized)')
+	parser.add_argument('--seed', type=int, default=None,
+					   help='Random seed (default: random)')
 	
 	args = parser.parse_args()
 	
@@ -581,6 +560,7 @@ Examples:
 		print(f"\n{'#'*60}")
 		print(f"Testing mode: {config['name']}")
 		print(f"  Randomize: {config['randomize']}")
+		print(f"  Seed: {args.seed if args.seed is not None else 'Random'}")
 		if args.step_by_step:
 			print(f"  Step-by-step mode: ENABLED")
 		print(f"{'#'*60}")
@@ -599,9 +579,9 @@ Examples:
 			debug=args.debug,
 			show_boundary=args.show_boundary,
 			speed=args.speed,
-			no_op_threshold=args.no_op_threshold,
 			step_by_step=args.step_by_step,
-			render=not args.no_render
+			render=not args.no_render,
+			seed=args.seed
 		)
 		
 		if results is not None:

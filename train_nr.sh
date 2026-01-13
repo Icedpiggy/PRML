@@ -3,7 +3,7 @@
 # Training script for Transformer policy network with aggressive regularization to prevent overfitting
 
 python train.py \
-    --data-dir data \
+    --data-dir data_nr \
     --epochs 1000 \
     --batch-size 8 \
     --lr 5e-4 \
@@ -14,7 +14,7 @@ python train.py \
     --dropout 0 \
     --max-seq-len 2000 \
     --seed 42 \
-    --save-dir checkpoints \
+    --save-dir checkpoints_nr \
     --device cuda \
     --early-stopping-patience 1000 \
     --early-stopping-delta 1e-6 \
@@ -22,3 +22,6 @@ python train.py \
     --obs-embed-layers 3 \
     --use-class-weights \
     --entropy-weight 0.03
+
+# no dropout
+# no early-stop

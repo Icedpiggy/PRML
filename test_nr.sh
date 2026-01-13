@@ -3,11 +3,10 @@
 # Simple testing script for trained Transformer policy network
 
 python test.py \
-    --model-path checkpoints/final_model.pth \
-    --episodes 1 \
+    --model-path checkpoints_nr/final_model.pth \
+    --episodes 100 \
     --max-steps 2000 \
     --device cuda \
+    --seed 42 \
     --view front \
-    --randomize \
-    --debug \
-    --speed 1.0
+    --no-render
