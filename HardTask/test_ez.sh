@@ -10,6 +10,7 @@ python test.py \
     --view front \
     --randomize \
     --debug \
-    --speed 1.0 \
+    --no-render \
+    --seed 42 \
     --save-dir test_env_results \
     --easy

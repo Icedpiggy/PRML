@@ -192,6 +192,8 @@ class PolicyTester:
 						unit="step")
 			
 			for step in pbar:
+				action = self.get_action(obs)
+				
 				if self.debug or self.step_by_step:
 					print(f"\n{'-'*80}")
 					print(f"Step {step}")
@@ -210,8 +212,6 @@ class PolicyTester:
 						print(f"Temperature: {debug_info['temperature']:.2f}")
 						print(f"Consecutive no-ops: {debug_info['consecutive_no_ops']}")
 						print(f"Class indices: {debug_info['class_indices']}")
-				
-				action = self.get_action(obs)
 				
 				done, info = env.step(action)
 				obs = env.get_obs()
