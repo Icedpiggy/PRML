@@ -171,26 +171,69 @@ def collate_fn(batch):
 	}
 
 
-def compute_class_weights(dataset):
-	"""Compute inverse frequency class weights to handle class imbalance"""
+def compute_class_weights(dataset, gripper_weight_multiplier=5.0):
+	"""Compute inverse frequency class weights to handle class imbalance
+	
+	Args:
+		dataset: Trajectory dataset
+		gripper_weight_multiplier: Additional weight multiplier for gripper dimension (default: 5.0)
+			This increases the importance of gripper actions, which are rare but critical.
+			Set to 1.0 to disable this special weighting.
+	"""
 	all_actions = np.concatenate([t['actions'] for t in dataset.trajectories], axis=0)
 	valid_mask = all_actions != -100
 	
-	class_counts = np.bincount(all_actions[valid_mask].flatten(), minlength=3)
-	total_samples = np.sum(class_counts)
+	action_dim = all_actions.shape[-1]
 	
-	# Compute inverse frequency weights
-	# Add small epsilon to avoid division by zero
-	class_weights = 1.0 / (class_counts / total_samples + 1e-6)
+	# Compute class weights for each action dimension separately
+	per_dim_weights = np.ones((action_dim, 3), dtype=np.float32)
 	
-	# Normalize weights
-	class_weights = class_weights / np.sum(class_weights) * 3
+	print(f"\nClass weights (inverse frequency, per action dimension):")
+	print(f"  Note: Dimension 3 is gripper (critical but rare)")
+	print("-" * 70)
 	
-	print(f"\nClass weights (inverse frequency):")
-	for cls in range(3):
-		print(f"  Class {cls}: {class_weights[cls]:.4f} (count: {class_counts[cls]})")
+	for dim in range(action_dim):
+		dim_mask = valid_mask[:, dim] if len(valid_mask.shape) > 1 else valid_mask
+		dim_actions = all_actions[:, dim][dim_mask]
+		
+		class_counts = np.bincount(dim_actions, minlength=3)
+		total_samples = len(dim_actions)
+		
+		# Compute inverse frequency weights
+		class_weights = 1.0 / (class_counts / total_samples + 1e-6)
+		
+		# Normalize weights (sum to 3 for each dimension)
+		class_weights = class_weights / np.sum(class_weights) * 3
+		
+		# Apply special weight multiplier for gripper dimension (dim=3)
+		if dim == 3 and gripper_weight_multiplier > 1.0:
+			# Boost weights for class 2 (open gripper) and class 0 (close gripper)
+			# These are the critical actions for the gripper
+			class_weights[0] *= gripper_weight_multiplier  # Close
+			class_weights[2] *= gripper_weight_multiplier  # Open
+			# Keep class 1 (hold) as is to encourage taking action
+		
+		per_dim_weights[dim] = class_weights
+		
+		# Print detailed statistics for each dimension
+		dim_name = ['X', 'Y', 'Z', 'GRIPPER'][dim] if dim < 4 else f'Dim{dim}'
+		print(f"\nDimension {dim} ({dim_name}):")
+		for cls in range(3):
+			cls_name = ['NEG', 'HOLD', 'POS'][cls] if dim < 3 else ['CLOSE', 'HOLD', 'OPEN'][cls]
+			percentage = class_counts[cls] / total_samples * 100 if total_samples > 0 else 0
+			print(f"  Class {cls} ({cls_name}): weight={class_weights[cls]:.4f}, "
+				  f"count={class_counts[cls]:6d} ({percentage:5.2f}%)")
 	
-	return torch.FloatTensor(class_weights).cuda() if torch.cuda.is_available() else torch.FloatTensor(class_weights)
+	# Print summary
+	print("\n" + "="*70)
+	print("Weight Summary:")
+	print("="*70)
+	print(f"Gripper weight multiplier: {gripper_weight_multiplier}x")
+	print(f"This means gripper actions (open/close) are {gripper_weight_multiplier}x more important")
+	print("than other actions during training.")
+	print("="*70)
+	
+	return torch.FloatTensor(per_dim_weights).cuda() if torch.cuda.is_available() else torch.FloatTensor(per_dim_weights)
 
 
 def train_epoch(model, dataloader, optimizer, criterion, device, epoch, total_epochs, class_weights=None, entropy_weight=0.01):
@@ -225,14 +268,40 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch, total_ep
 		mask_flat = mask_expanded.reshape(-1)  # (batch_size * seq_len * action_dim,)
 		
 		if class_weights is not None:
-			# Apply class weights to the loss
-			# Create weight matrix for each sample
-			weights = torch.ones_like(action_classes_flat, dtype=torch.float)
-			valid_mask = action_classes_flat != -100
-			weights[valid_mask] = class_weights[action_classes_flat[valid_mask]]
-			loss_f = nn.CrossEntropyLoss(weight=class_weights, ignore_index=-100, reduction='none')
-			cls_loss_per_sample = loss_f(logits_flat, action_classes_flat)
-			cls_loss = (cls_loss_per_sample * weights).sum() / weights.sum()
+			# Check if class_weights is per-dimension (shape: [action_dim, 3])
+			if class_weights.dim() == 2:
+				# Reshape action_classes to identify which dimension each prediction belongs to
+				# action_classes_flat has shape (batch_size * seq_len * action_dim,)
+				# We need to map each element to its action dimension index
+				num_samples = action_classes_flat.shape[0]
+				action_dim = class_weights.shape[0]
+				samples_per_dim = num_samples // action_dim
+				
+				# Create dimension indices: [0,0,...,0, 1,1,...,1, 2,2,...,2, 3,3,...,3]
+				dim_indices = torch.arange(action_dim, device=device).unsqueeze(1).expand(1, samples_per_dim).reshape(-1)
+				
+				# Get weights based on dimension and class
+				weights = torch.ones_like(action_classes_flat, dtype=torch.float)
+				valid_mask = action_classes_flat != -100
+				
+				if valid_mask.any():
+					# For valid positions, select weight based on (dim, class) pair
+					valid_dim_indices = dim_indices[valid_mask]
+					valid_class_indices = action_classes_flat[valid_mask].long()
+					weights[valid_mask] = class_weights[valid_dim_indices, valid_class_indices]
+				
+				# Compute loss with per-sample weights
+				loss_f = nn.CrossEntropyLoss(ignore_index=-100, reduction='none')
+				cls_loss_per_sample = loss_f(logits_flat, action_classes_flat)
+				cls_loss = (cls_loss_per_sample * weights).sum() / weights.sum()
+			else:
+				# Original behavior: single weight vector for all dimensions
+				weights = torch.ones_like(action_classes_flat, dtype=torch.float)
+				valid_mask = action_classes_flat != -100
+				weights[valid_mask] = class_weights[action_classes_flat[valid_mask]]
+				loss_f = nn.CrossEntropyLoss(weight=class_weights, ignore_index=-100, reduction='none')
+				cls_loss_per_sample = loss_f(logits_flat, action_classes_flat)
+				cls_loss = (cls_loss_per_sample * weights).sum() / weights.sum()
 		else:
 			cls_loss = criterion(logits_flat, action_classes_flat)
 		
@@ -301,14 +370,38 @@ def validate(model, dataloader, criterion, device, class_weights=None):
 			mask_flat = mask_expanded.reshape(-1)  # (batch_size * seq_len * action_dim,)
 			
 			if class_weights is not None:
-				# Apply class weights to the loss (same as in train_epoch)
-				# Create weight matrix for each sample
-				weights = torch.ones_like(action_classes_flat, dtype=torch.float)
-				valid_mask = action_classes_flat != -100
-				weights[valid_mask] = class_weights[action_classes_flat[valid_mask]]
-				loss_f = nn.CrossEntropyLoss(weight=class_weights, ignore_index=-100, reduction='none')
-				cls_loss_per_sample = loss_f(logits_flat, action_classes_flat)
-				loss = (cls_loss_per_sample * weights).sum() / weights.sum()
+				# Check if class_weights is per-dimension (shape: [action_dim, 3])
+				if class_weights.dim() == 2:
+					# Reshape action_classes to identify which dimension each prediction belongs to
+					num_samples = action_classes_flat.shape[0]
+					action_dim = class_weights.shape[0]
+					samples_per_dim = num_samples // action_dim
+					
+					# Create dimension indices: [0,0,...,0, 1,1,...,1, 2,2,...,2, 3,3,...,3]
+					dim_indices = torch.arange(action_dim, device=device).unsqueeze(1).expand(1, samples_per_dim).reshape(-1)
+					
+					# Get weights based on dimension and class
+					weights = torch.ones_like(action_classes_flat, dtype=torch.float)
+					valid_mask = action_classes_flat != -100
+					
+					if valid_mask.any():
+						# For valid positions, select weight based on (dim, class) pair
+						valid_dim_indices = dim_indices[valid_mask]
+						valid_class_indices = action_classes_flat[valid_mask].long()
+						weights[valid_mask] = class_weights[valid_dim_indices, valid_class_indices]
+					
+					# Compute loss with per-sample weights
+					loss_f = nn.CrossEntropyLoss(ignore_index=-100, reduction='none')
+					cls_loss_per_sample = loss_f(logits_flat, action_classes_flat)
+					loss = (cls_loss_per_sample * weights).sum() / weights.sum()
+				else:
+					# Original behavior: single weight vector for all dimensions
+					weights = torch.ones_like(action_classes_flat, dtype=torch.float)
+					valid_mask = action_classes_flat != -100
+					weights[valid_mask] = class_weights[action_classes_flat[valid_mask]]
+					loss_f = nn.CrossEntropyLoss(weight=class_weights, ignore_index=-100, reduction='none')
+					cls_loss_per_sample = loss_f(logits_flat, action_classes_flat)
+					loss = (cls_loss_per_sample * weights).sum() / weights.sum()
 			else:
 				loss = criterion(logits_flat, action_classes_flat)
 			
@@ -390,6 +483,11 @@ def main():
 					   help='Number of layers in observation embedding MLP (default: 2)')
 	parser.add_argument('--use-class-weights', action='store_true',
 					   help='Use class weights to handle class imbalance')
+	parser.add_argument('--gripper-weight-mult', type=float, default=5.0,
+					   help='Multiplier for gripper action weights (default: 5.0). '
+					    'Gripper actions (open/close) are rare but critical. '
+					    'This increases their importance during training. '
+					    'Set to 1.0 to disable this special weighting.')
 	parser.add_argument('--entropy-weight', type=float, default=0.01,
 					   help='Entropy regularization weight (default: 0.01). Set to 0 to disable.')
 	
@@ -520,7 +618,7 @@ def main():
 		print("\n" + "="*60)
 		print("Computing class weights...")
 		print("="*60)
-		class_weights = compute_class_weights(train_dataset)
+		class_weights = compute_class_weights(train_dataset, gripper_weight_multiplier=args.gripper_weight_mult)
 	
 	# Cross-Entropy Loss with ignore_index for padding
 	criterion = nn.CrossEntropyLoss(ignore_index=-100)
@@ -532,6 +630,9 @@ def main():
 	print("="*60)
 	print(f"\nTraining configuration:")
 	print(f"  Use class weights: {args.use_class_weights}")
+	if args.use_class_weights:
+		print(f"  Gripper weight multiplier: {args.gripper_weight_mult}x")
+		print(f"  (Gripper actions are {args.gripper_weight_mult}x more important)")
 	print(f"  Entropy regularization weight: {args.entropy_weight}")
 	
 	train_losses = []

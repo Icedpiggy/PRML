@@ -5,18 +5,18 @@
 python train.py \
     --data-dir data \
     --epochs 1000 \
-    --batch-size 16 \
+    --batch-size 8 \
     --lr 5e-4 \
     --d-model 64 \
     --nhead 8 \
     --num-layers 4 \
     --dim-feedforward 256 \
-    --dropout 0.5 \
+    --dropout 0 \
     --max-seq-len 2000 \
     --seed 42 \
     --save-dir checkpoints \
     --device cuda \
-    --early-stopping-patience 30 \
+    --early-stopping-patience 1000 \
     --early-stopping-delta 1e-6 \
     --obs-embed-hidden 128 \
     --obs-embed-layers 3 \

@@ -157,7 +157,7 @@ class DataCollector:
 		print("PRML Project - Arm Imitation Learning Data Collection")
 		print("=" * 60)
 		print("\nTask:")
-		print("  Lift the rod to target height (0.3m)")
+		print("  Lift the rod to target height (0.5m)")
 		print("  Keep rod within 1m radius circle from origin")
 		print(f"\nDataset type: {self.dataset_type.upper()}")
 		print(f"Save directory: {os.path.abspath(self.save_dir)}")

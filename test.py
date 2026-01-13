@@ -22,7 +22,7 @@ class PolicyTester:
 	def __init__(self, model, device, pos_speed,
 				 obs_mean, obs_std, obs_dim, action_dim, 
 				 max_seq_len, debug=False, show_boundary=False, 
-				 speed=1.0, temperature=1.0, no_op_threshold=50):
+				 speed=1.0, no_op_threshold=50, step_by_step=False):
 		self.model = model
 		self.device = device
 		self.pos_speed = pos_speed
@@ -34,8 +34,8 @@ class PolicyTester:
 		self.debug = debug
 		self.show_boundary = show_boundary
 		self.speed = speed
-		self.temperature = temperature
 		self.no_op_threshold = no_op_threshold
+		self.step_by_step = step_by_step
 		
 		self.model.eval()
 		
@@ -45,13 +45,22 @@ class PolicyTester:
 		# Track consecutive no-op actions
 		self.consecutive_no_ops = 0
 		
+		# Test if input is available
+		import sys
+		self.input_available = sys.stdin.isatty()
+		
 		print(f"\nPolicy Tester initialized")
 		print(f"  Debug mode: {debug}")
 		print(f"  Show boundary: {show_boundary}")
 		print(f"  Playback speed: {speed}x")
 		print(f"  Position speed: {pos_speed}")
-		print(f"  Temperature: {temperature}")
 		print(f"  No-op threshold: {no_op_threshold} steps")
+		print(f"  Step-by-step mode: {step_by_step}")
+		
+		if step_by_step and not self.input_available:
+			print(f"\n[WARNING] Step-by-step mode requested but interactive input not available!")
+			print(f"[WARNING] Running in continuous mode instead.")
+			self.step_by_step = False
 	
 	def get_action(self, obs):
 		"""Get action from model given current observation"""
@@ -77,11 +86,7 @@ class PolicyTester:
 		# Get logits for the last timestep
 		logits = action_logits[0, -1, :, :]  # (action_dim, num_classes)
 		
-		# Apply temperature scaling to logits
-		if self.temperature != 1.0:
-			logits = logits / self.temperature
-		
-		# Get class indices (argmax on logits, same as on probs)
+		# Get class indices (argmax on logits, deterministic)
 		class_indices = torch.argmax(logits, dim=-1).cpu().numpy()  # (action_dim,)
 		
 		# Check if all actions are no-op (all class 1)
@@ -123,8 +128,7 @@ class PolicyTester:
 			'action_norm': float(np.linalg.norm(action)),
 			'pos_delta': action[:3],
 			'gripper_cmd': action[3],
-			'consecutive_no_ops': self.consecutive_no_ops,
-			'temperature': self.temperature
+			'consecutive_no_ops': self.consecutive_no_ops
 		}
 		
 		return action
@@ -133,56 +137,169 @@ class PolicyTester:
 		"""Reset observation history"""
 		self.obs_history = []
 	
-	def test_episode(self, env, max_steps=2000, view='front'):
+	def test_episode(self, env, max_steps=2000, view='front', render=True):
 		"""Test model on one episode"""
 		self.reset_history()
 		
-		env.set_camera_view(view)
+		if render:
+			env.set_camera_view(view)
 		obs = env.reset()
 		
 		done = False
 		step = 0
 		info_history = []
 		
+		if self.step_by_step:
+			print("\n" + "="*80)
+			print("STEP-BY-STEP MODE ENABLED")
+			print("="*80)
+			print("  Press Enter after each step to continue")
+			print("  Type 'skip' to run continuously")
+			print("  Type 'q' to quit the episode")
+			print("="*80)
+		
+		if self.debug:
+			print("\n" + "="*80)
+			print("EPISODE START - Detailed Debug Information")
+			print("="*80)
+			print(f"\nInitial observation (first 10 dims): {obs[:10]}")
+			print(f"Observation dimension: {len(obs)}")
+		
 		try:
-			# Create progress bar
-			pbar = tqdm(range(max_steps), desc="Episode", disable=not self.debug,
-						unit="step")
+			# Create progress bar (disable in step-by-step mode)
+			pbar = tqdm(range(max_steps), desc="Episode", 
+					   disable=not self.debug or self.step_by_step,
+					   unit="step")
 			
 			for step in pbar:
+				if self.debug or self.step_by_step:
+					print(f"\n{'-'*80}")
+					print(f"Step {step}")
+					print(f"{'-'*80}")
+					if self.debug:
+						print(f"\n=== OBSERVATION (35 dims) ===")
+						print(f"\n[1] Arm Joint Positions (7 dims):")
+						print(f"  j1={obs[0]:.4f}, j2={obs[1]:.4f}, j3={obs[2]:.4f}, j4={obs[3]:.4f}")
+						print(f"  j5={obs[4]:.4f}, j6={obs[5]:.4f}, j7={obs[6]:.4f}")
+						print(f"\n[2] Gripper Finger Positions (2 dims):")
+						print(f"  left={obs[7]:.4f}, right={obs[8]:.4f}")
+						print(f"\n[3] Rod Position (3 dims):")
+						print(f"  x={obs[9]:.6f}, y={obs[10]:.4f}, z={obs[11]:.4f}")
+						print(f"\n[4] Rod Orientation - Quaternion (4 dims):")
+						print(f"  qx={obs[12]:.4f}, qy={obs[13]:.4f}, qz={obs[14]:.4f}, qw={obs[15]:.4f}")
+						print(f"\n[5] End-Effector Position (3 dims):")
+						print(f"  x={obs[16]:.4f}, y={obs[17]:.4f}, z={obs[18]:.4f}")
+						print(f"\n[6] End-Effector Orientation - Quaternion (4 dims):")
+						print(f"  qx={obs[19]:.4f}, qy={obs[20]:.4f}, qz={obs[21]:.4f}, qw={obs[22]:.4f}")
+						print(f"\n[7] End-Effector to Rod Relative Position (3 dims):")
+						print(f"  dx={obs[23]:.4f}, dy={obs[24]:.4f}, dz={obs[25]:.4f}")
+						print(f"\n[8] Rod Center Position (3 dims):")
+						print(f"  x={obs[26]:.6f}, y={obs[27]:.4f}, z={obs[28]:.4f}")
+						print(f"\n[9] Distance from Origin (1 dim):")
+						print(f"  dist={obs[29]:.4f} m")
+						print(f"\n[10] Rod Height (1 dim):")
+						print(f"  height={obs[30]:.4f} m (target={obs[31]:.4f} m)")
+						print(f"\n[11] Height Difference (1 dim):")
+						print(f"  delta={obs[32]:.4f} m ({'REACHED' if obs[32] >= 0 else 'NOT REACHED'})")
+						print(f"\n[12] Boundary Violation (1 dim):")
+						print(f"  violated={obs[33]:.0f} ({'YES' if obs[33] > 0.5 else 'NO'})")
+						print(f"\n[13] Episode Step (1 dim):")
+						print(f"  step={obs[34]:.0f}")
+						print(f"\n[14] History Buffer:")
+						print(f"  size={len(self.obs_history)}/{self.max_seq_len}")
+				
+				obs = env.get_obs()
 				action = self.get_action(obs)
 				
+				if self.debug or self.step_by_step:
+					if self.debug:
+						debug_info = self.last_debug_info
+						print(f"\n=== ACTION (4 dims) ===")
+						print(f"\n[1] Position Delta (3 dims):")
+						print(f"  dx={debug_info['pos_delta'][0]:.4f}, dy={debug_info['pos_delta'][1]:.4f}, dz={debug_info['pos_delta'][2]:.4f}")
+						print(f"  Direction: {'FORWARD' if debug_info['pos_delta'][0] > 0 else 'BACKWARD' if debug_info['pos_delta'][0] < 0 else 'NONE'} (X)")
+						print(f"  Direction: {'LEFT' if debug_info['pos_delta'][1] > 0 else 'RIGHT' if debug_info['pos_delta'][1] < 0 else 'NONE'} (Y)")
+						print(f"  Direction: {'UP' if debug_info['pos_delta'][2] > 0 else 'DOWN' if debug_info['pos_delta'][2] < 0 else 'NONE'} (Z)")
+						print(f"\n[2] Gripper Command (1 dim):")
+						gripper_val = debug_info['gripper_cmd']
+						gripper_action = 'OPEN' if gripper_val > 0.5 else 'CLOSE' if gripper_val < -0.5 else 'HOLD'
+						print(f"  value={gripper_val:.2f} -> {gripper_action}")
+						print(f"\n[3] Action Norm:")
+						print(f"  norm={debug_info['action_norm']:.4f}")
+						print(f"\n[4] Class Indices (4 dims):")
+						for i, idx in enumerate(debug_info['class_indices']):
+							if i < 3:
+								action_type = 'MOVE' if idx != 1 else 'NO-OP'
+								direction = 'POSITIVE' if idx == 2 else 'NEGATIVE' if idx == 0 else 'NONE'
+								axis = ['X', 'Y', 'Z'][i]
+								print(f"  Dim {i} ({axis}): class={idx} -> {action_type} {direction}")
+							else:
+								gripper_class = 'OPEN' if idx == 2 else 'CLOSE' if idx == 0 else 'HOLD'
+								print(f"  Dim {i} (GRIP): class={idx} -> {gripper_class}")
+						print(f"\n[5] Model Output:")
+						print(f"  Logits range: [{debug_info['logits_range'][0]:.2f}, {debug_info['logits_range'][1]:.2f}]")
+						print(f"  Sequence length: {debug_info['seq_len']}")
+						print(f"  Consecutive no-ops: {debug_info['consecutive_no_ops']}")
+						if debug_info['consecutive_no_ops'] >= 10:
+							print(f"  WARNING: High no-op count!")
+				
 				done, info = env.step(action)
-				obs = env.get_obs()
+				
+				if self.debug or self.step_by_step:
+					if self.debug:
+						print(f"\n=== ENVIRONMENT INFO ===")
+						print(f"  Reached target height: {info['reached_height']} (True/False)")
+						print(f"  Boundary violation: {info['bnd_vio']} (True/False)")
+						print(f"  Episode done: {done} (True/False)")
 				
 				info_history.append(info.copy())
 				
 				# Update progress bar with debug info
-				if self.debug:
+				if self.debug and not self.step_by_step:
 					debug_info = self.last_debug_info
 					
 					# Format debug info for progress bar
 					postfix = []
-					postfix.append(f"height={info['reached_height']:.3f}m")
-					postfix.append(f"bnd_vio={info['bnd_vio']}")
-					
-					# Add action info
-					postfix.append(f"pos=({debug_info['pos_delta'][0]:.3f},{debug_info['pos_delta'][1]:.3f},{debug_info['pos_delta'][2]:.3f})")
+					postfix.append(f"height={info['reached_height']}")
+					postfix.append(f"bnd={info['bnd_vio']}")
+					postfix.append(f"pos=({debug_info['pos_delta'][0]:.2f},{debug_info['pos_delta'][1]:.2f},{debug_info['pos_delta'][2]:.2f})")
 					postfix.append(f"grip={debug_info['gripper_cmd']:.1f}")
-					
-					# Add model output info
-					postfix.append(f"seq_len={debug_info['seq_len']}")
-					postfix.append(f"logits=[{debug_info['logits_range'][0]:.2f},{debug_info['logits_range'][1]:.2f}]")
-					postfix.append(f"temp={debug_info['temperature']:.2f}")
+					postfix.append(f"seq={debug_info['seq_len']}")
 					postfix.append(f"no_op={debug_info['consecutive_no_ops']}")
 					
 					# Format class indices
 					classes_str = ''.join(map(str, debug_info['class_indices']))
-					postfix.append(f"classes={classes_str}")
+					postfix.append(f"cls={classes_str}")
 					
 					pbar.set_postfix_str(' '.join(postfix))
 				
+				if self.step_by_step and not done:
+					# Wait for user input in step-by-step mode
+					print(f"\n{'='*80}")
+					try:
+						user_input = input("Press Enter to continue (or type 'skip'/'q'): ")
+						if user_input.strip().lower() == 'skip':
+							self.step_by_step = False
+							print("\n[INFO] Switching to continuous mode...")
+						elif user_input.strip().lower() == 'q':
+							print("\n[INFO] Quitting episode...")
+							break
+					except (EOFError, KeyboardInterrupt):
+						# Handle non-interactive environments or Ctrl+C
+						print("\n[ERROR] Input not available!")
+						print("[ERROR] Switching to continuous mode...")
+						self.step_by_step = False
+					except Exception as e:
+						print(f"\n[ERROR] Unexpected error getting input: {e}")
+						print("[ERROR] Switching to continuous mode...")
+						self.step_by_step = False
+				
 				if done:
+					if self.debug:
+						print(f"\n{'-'*80}")
+						print(f"Episode finished at step {step}")
+						print(f"Reason: {'Target height reached' if info['reached_height'] else 'Boundary violation'}")
+						print(f"{'-'*80}")
 					break
 				
 				time.sleep(1./ (self.speed * 60))
@@ -216,7 +333,7 @@ class PolicyTester:
 
 def test_model(env_config, model_path, device, num_episodes=10, max_steps=2000,
 				view='front', debug=False, show_boundary=False, speed=1.0,
-				temperature=1.0, no_op_threshold=50):
+				no_op_threshold=50, step_by_step=False, render=True):
 	"""Test model in environment"""
 	
 	print("\n" + "="*60)
@@ -290,7 +407,8 @@ def test_model(env_config, model_path, device, num_episodes=10, max_steps=2000,
 		model, device, pos_speed, obs_mean, obs_std,
 		obs_dim, action_dim, max_seq_len, debug=debug, 
 		show_boundary=show_boundary, speed=speed,
-		temperature=temperature, no_op_threshold=no_op_threshold
+		no_op_threshold=no_op_threshold,
+		step_by_step=step_by_step
 	)
 	
 	print("\n" + "="*60)
@@ -300,6 +418,7 @@ def test_model(env_config, model_path, device, num_episodes=10, max_steps=2000,
 	print(f"  Number of episodes: {num_episodes}")
 	print(f"  Max steps per episode: {max_steps}")
 	print(f"  View: {view}")
+	print(f"  Render: {render}")
 	
 	results = []
 	
@@ -308,10 +427,10 @@ def test_model(env_config, model_path, device, num_episodes=10, max_steps=2000,
 		print(f"Episode {episode + 1}/{num_episodes}")
 		print(f"{'='*60}")
 		
-		env = ArmEnv(render=True, verbose=False, debug=debug, 
+		env = ArmEnv(render=render, verbose=False, debug=debug, 
 					show_bnd=show_boundary, **env_config)
 		
-		result = tester.test_episode(env, max_steps=max_steps, view=view)
+		result = tester.test_episode(env, max_steps=max_steps, view=view, render=render)
 		results.append(result)
 		
 		print(f"\nEpisode {episode + 1} Results:")
@@ -325,7 +444,7 @@ def test_model(env_config, model_path, device, num_episodes=10, max_steps=2000,
 		
 		env.close()
 		
-		if episode < num_episodes - 1:
+		if episode < num_episodes - 1 and render:
 			input("\nPress Enter to continue to next episode (or Ctrl+C to exit)...")
 	
 	# Calculate statistics
@@ -427,10 +546,12 @@ Examples:
 					   help='Show boundary markers')
 	parser.add_argument('--speed', type=float, default=1.0,
 					   help='Simulation speed multiplier (default: 1.0)')
-	parser.add_argument('--temperature', type=float, default=1.0,
-					   help='Temperature for softmax (default: 1.0). Higher values encourage exploration.')
 	parser.add_argument('--no-op-threshold', type=int, default=50,
 					   help='Number of consecutive no-ops before forcing exploration (default: 50)')
+	parser.add_argument('--step-by-step', action='store_true',
+					   help='Run step-by-step, waiting for user input after each step')
+	parser.add_argument('--no-render', action='store_true',
+					   help='Disable rendering (run in headless mode)')
 	parser.add_argument('--save-dir', type=str, default='test_env_results',
 					   help='Directory to save test results')
 	parser.add_argument('--all-modes', action='store_true',
@@ -460,6 +581,8 @@ Examples:
 		print(f"\n{'#'*60}")
 		print(f"Testing mode: {config['name']}")
 		print(f"  Randomize: {config['randomize']}")
+		if args.step_by_step:
+			print(f"  Step-by-step mode: ENABLED")
 		print(f"{'#'*60}")
 		
 		env_config = {
@@ -476,17 +599,54 @@ Examples:
 			debug=args.debug,
 			show_boundary=args.show_boundary,
 			speed=args.speed,
-			temperature=args.temperature,
-			no_op_threshold=args.no_op_threshold
+			no_op_threshold=args.no_op_threshold,
+			step_by_step=args.step_by_step,
+			render=not args.no_render
 		)
 		
 		if results is not None:
 			all_results[config['name']] = results
 			
 			# Save results for this mode
-			mode_save_path = os.path.join(args.save_dir, f"{config['name']}_results.pkl")
-			with open(mode_save_path, 'wb') as f:
-				pickle.dump(results, f)
+			mode_save_path = os.path.join(args.save_dir, f"{config['name']}_results.log")
+			with open(mode_save_path, 'w') as f:
+				f.write("="*60 + "\n")
+				f.write(f"Test Results - Mode: {config['name']}\n")
+				f.write("="*60 + "\n\n")
+				
+				# Write model info
+				f.write("Model Information:\n")
+				f.write("-"*40 + "\n")
+				model_info = results['model_info']
+				f.write(f"  Epoch: {model_info['epoch']}\n")
+				f.write(f"  Train Loss: {model_info['train_loss']:.6f}\n")
+				f.write(f"  Val Loss: {model_info['val_loss']:.6f}\n")
+				f.write(f"  Total Parameters: {model_info['total_params']:,}\n\n")
+				
+				# Write overall statistics
+				f.write("Overall Statistics:\n")
+				f.write("-"*40 + "\n")
+				f.write(f"  Success Rate: {results['success_rate']:.2%}\n")
+				f.write(f"  Average Steps: {results['avg_steps']:.1f}\n")
+				f.write(f"  Height Reached Rate: {results['height_rate']:.2%}\n")
+				f.write(f"  Boundary Violation Rate: {results['violation_rate']:.2%}\n\n")
+				
+				# Write episode-by-episode results
+				f.write("Episode Results:\n")
+				f.write("-"*40 + "\n")
+				for i, ep_result in enumerate(results['episode_results']):
+					f.write(f"\nEpisode {i+1}:\n")
+					f.write(f"  Success: {ep_result['success']}\n")
+					f.write(f"  Steps: {ep_result['steps']}\n")
+					f.write(f"  Reached Height: {ep_result['reached_height']}\n")
+					f.write(f"  Boundary Violation: {ep_result['boundary_violation']}\n")
+					if 'error' in ep_result:
+						f.write(f"  Error: {ep_result['error']}\n")
+				
+				f.write("\n" + "="*60 + "\n")
+				f.write(f"Generated by test.py\n")
+				f.write("="*60 + "\n")
+			
 			print(f"\nResults for {config['name']} mode saved to: {mode_save_path}")
 	
 	# Plot success rates if multiple modes tested
@@ -495,9 +655,27 @@ Examples:
 		plot_success_rates(all_results, plot_path)
 		
 		# Save all results together
-		all_results_path = os.path.join(args.save_dir, 'all_results.pkl')
-		with open(all_results_path, 'wb') as f:
-			pickle.dump(all_results, f)
+		all_results_path = os.path.join(args.save_dir, 'all_results.log')
+		with open(all_results_path, 'w') as f:
+			f.write("="*60 + "\n")
+			f.write("All Test Results Summary\n")
+			f.write("="*60 + "\n\n")
+			
+			for mode_name, results in all_results.items():
+				f.write(f"Mode: {mode_name}\n")
+				f.write("-"*40 + "\n")
+				f.write(f"  Success Rate: {results['success_rate']:.2%}\n")
+				f.write(f"  Average Steps: {results['avg_steps']:.1f}\n")
+				f.write(f"  Height Reached Rate: {results['height_rate']:.2%}\n")
+				f.write(f"  Boundary Violation Rate: {results['violation_rate']:.2%}\n")
+				f.write(f"  Model Epoch: {results['model_info']['epoch']}\n")
+				f.write(f"  Train Loss: {results['model_info']['train_loss']:.6f}\n")
+				f.write(f"  Val Loss: {results['model_info']['val_loss']:.6f}\n\n")
+			
+			f.write("="*60 + "\n")
+			f.write("See individual mode result files for detailed episode-by-episode results\n")
+			f.write("="*60 + "\n")
+		
 		print(f"\nAll results saved to: {all_results_path}")
 	
 	print("\n" + "="*60)
