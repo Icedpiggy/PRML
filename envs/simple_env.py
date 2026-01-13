@@ -98,9 +98,9 @@ class SimpleRodEnv:
 		orn = self._rand_orn() if self.randomize else [0, 0, 0, 1]
 		
 		if self.randomize:
-			pos = [self.rng.uniform(-0.3, 0.3), self.rng.uniform(-0.3, 0.3), self.ROD_L / 2]
+			pos = [self.rng.uniform(-0.4, 0.4), self.rng.uniform(0.2, 0.4), self.ROD_L / 2]
 		else:
-			pos = [0.0, 0.0, self.ROD_L / 2]
+			pos = [0.0, 0.3, self.ROD_L / 2]
 		
 		self.rod = self._create_rod([1, 0, 0, 1], pos, orn=orn)
 		

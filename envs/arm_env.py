@@ -157,7 +157,7 @@ class ArmEnv:
 		if self.randomize:
 			pos = [self.rng.uniform(-0.4, 0.4), self.rng.uniform(0.2, 0.4), self.ROD_L / 2]
 		else:
-			pos = [0.0, 0.0, self.ROD_L / 2]
+			pos = [0.0, 0.3, self.ROD_L / 2]
 		
 		self.rod = self._create_rod([1, 0, 0, 1], pos, orn=orn)
 		
@@ -180,16 +180,22 @@ class ArmEnv:
 		rod_pos, rod_orn = p.getBasePositionAndOrientation(self.rod)
 		rod_vel, rod_ang_v = p.getBaseVelocity(self.rod)
 		
+		# Calculate relative position of end-effector to rod
+		end_pos_array = np.array(end_pos)
+		rod_pos_array = np.array(rod_pos)
+		end_pos_relative = end_pos_array - rod_pos_array
+		
 		if self.verbose:
 			print(f"Debug get_obs:")
 			print(f"  joint_pos length: {len(joint_pos)}")
 			print(f"  joint_vel length: {len(joint_vel)}")
 			print(f"  end_pos length: {len(list(end_pos))}")
 			print(f"  end_orn length: {len(list(end_orn))}")
+			print(f"  end_pos_relative: {end_pos_relative}")
 			print(f"  rod state length: {len(list(rod_pos) + list(rod_orn) + list(rod_vel) + list(rod_ang_v))}")
 		
-		# obs: joint_pos (9) + joint_vel (9) + end_pos (3) + end_orn (4) + rod_state (13) = 38
-		obs = np.array(joint_pos + joint_vel + list(end_pos) + list(end_orn) +
+		# obs: joint_pos (9) + joint_vel (9) + end_pos_relative (3) + end_orn (4) + rod_state (13) = 38
+		obs = np.array(joint_pos + joint_vel + list(end_pos_relative) + list(end_orn) +
 					  list(rod_pos) + list(rod_orn) + list(rod_vel) + list(rod_ang_v))
 		
 		return obs
