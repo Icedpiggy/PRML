@@ -221,25 +221,53 @@ def collate_fn(batch):
 
 
 def compute_class_weights(dataset):
-	"""Compute inverse frequency class weights to handle class imbalance"""
+	"""Compute inverse frequency class weights to handle class imbalance (per action dimension)"""
 	all_actions = np.concatenate([t['actions'] for t in dataset.trajectories], axis=0)
 	valid_mask = all_actions != -100
 	
-	class_counts = np.bincount(all_actions[valid_mask].flatten(), minlength=3)
-	total_samples = np.sum(class_counts)
+	action_dim = all_actions.shape[-1]
 	
-	# Compute inverse frequency weights
-	# Add small epsilon to avoid division by zero
-	class_weights = 1.0 / (class_counts / total_samples + 1e-6)
+	# Compute per-dimension weights
+	per_dim_weights = np.ones((action_dim, 3), dtype=np.float32)
 	
-	# Normalize weights
-	class_weights = class_weights / np.sum(class_weights) * 3
+	print(f"\nClass weights (inverse frequency, per action dimension):")
+	print("-" * 70)
 	
-	print(f"\nClass weights (inverse frequency):")
-	for cls in range(3):
-		print(f"  Class {cls}: {class_weights[cls]:.4f} (count: {class_counts[cls]})")
+	for dim in range(action_dim):
+		dim_mask = valid_mask[:, dim] if len(valid_mask.shape) > 1 else valid_mask
+		dim_actions = all_actions[:, dim][dim_mask]
+		
+		class_counts = np.bincount(dim_actions, minlength=3)
+		total_samples = len(dim_actions)
+		
+		# Compute inverse frequency weights
+		class_weights = 1.0 / (class_counts / total_samples + 1e-6)
+		
+		# Normalize weights
+		class_weights = class_weights / np.sum(class_weights) * 3
+		
+		per_dim_weights[dim] = class_weights
+		
+		# Determine dimension name
+		if dim < 3:
+			dim_name = ['X', 'Y', 'Z'][dim]
+		elif dim == 3 and dataset.easy:
+			dim_name = 'GRIP'
+		elif dim == 6:
+			dim_name = 'GRIP'
+		else:
+			dim_name = f'ROT{dim-3}'
+		
+		print(f"\nDimension {dim} ({dim_name}):")
+		for cls in range(3):
+			cls_name = ['NEG', 'HOLD', 'POS'][cls] if dim != 6 else ['CLOSE', 'HOLD', 'OPEN'][cls]
+			percentage = class_counts[cls] / total_samples * 100 if total_samples > 0 else 0
+			print(f"  Class {cls} ({cls_name}): weight={class_weights[cls]:.4f}, "
+				  f"count={class_counts[cls]:6d} ({percentage:5.2f}%)")
 	
-	return torch.FloatTensor(class_weights).cuda() if torch.cuda.is_available() else torch.FloatTensor(class_weights)
+	print("="*70)
+	
+	return torch.FloatTensor(per_dim_weights).cuda() if torch.cuda.is_available() else torch.FloatTensor(per_dim_weights)
 
 
 def train_epoch(model, dataloader, optimizer, criterion, device, epoch, total_epochs, class_weights=None, entropy_weight=0.01):
@@ -274,14 +302,33 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch, total_ep
 		mask_flat = mask_expanded.reshape(-1)  # (batch_size * seq_len * action_dim,)
 		
 		if class_weights is not None:
-			# Apply class weights to the loss
-			# Create weight matrix for each sample
-			weights = torch.ones_like(action_classes_flat, dtype=torch.float)
-			valid_mask = action_classes_flat != -100
-			weights[valid_mask] = class_weights[action_classes_flat[valid_mask]]
-			loss_f = nn.CrossEntropyLoss(weight=class_weights, ignore_index=-100, reduction='none')
-			cls_loss_per_sample = loss_f(logits_flat, action_classes_flat)
-			cls_loss = (cls_loss_per_sample * weights).sum() / weights.sum()
+			if class_weights.dim() == 2:
+				# Handle 2D weight tensor (per-dimension weights)
+				num_samples = action_classes_flat.shape[0]
+				action_dim = class_weights.shape[0]
+				samples_per_dim = num_samples // action_dim
+				
+				dim_indices = torch.arange(action_dim, device=device).unsqueeze(1).expand(-1, samples_per_dim).reshape(-1)
+				
+				weights = torch.ones_like(action_classes_flat, dtype=torch.float)
+				valid_mask = action_classes_flat != -100
+				
+				if valid_mask.any():
+					valid_dim_indices = dim_indices[valid_mask]
+					valid_class_indices = action_classes_flat[valid_mask].long()
+					weights[valid_mask] = class_weights[valid_dim_indices, valid_class_indices]
+				
+				loss_f = nn.CrossEntropyLoss(ignore_index=-100, reduction='none')
+				cls_loss_per_sample = loss_f(logits_flat, action_classes_flat)
+				cls_loss = (cls_loss_per_sample * weights).sum() / weights.sum()
+			else:
+				# Handle 1D weight tensor (global weights)
+				weights = torch.ones_like(action_classes_flat, dtype=torch.float)
+				valid_mask = action_classes_flat != -100
+				weights[valid_mask] = class_weights[action_classes_flat[valid_mask]]
+				loss_f = nn.CrossEntropyLoss(weight=class_weights, ignore_index=-100, reduction='none')
+				cls_loss_per_sample = loss_f(logits_flat, action_classes_flat)
+				cls_loss = (cls_loss_per_sample * weights).sum() / weights.sum()
 		else:
 			cls_loss = criterion(logits_flat, action_classes_flat)
 		
@@ -350,14 +397,33 @@ def validate(model, dataloader, criterion, device, class_weights=None):
 			mask_flat = mask_expanded.reshape(-1)  # (batch_size * seq_len * action_dim,)
 			
 			if class_weights is not None:
-				# Apply class weights to loss (same as in train_epoch)
-				# Create weight matrix for each sample
-				weights = torch.ones_like(action_classes_flat, dtype=torch.float)
-				valid_mask = action_classes_flat != -100
-				weights[valid_mask] = class_weights[action_classes_flat[valid_mask]]
-				loss_f = nn.CrossEntropyLoss(weight=class_weights, ignore_index=-100, reduction='none')
-				cls_loss_per_sample = loss_f(logits_flat, action_classes_flat)
-				loss = (cls_loss_per_sample * weights).sum() / weights.sum()
+				if class_weights.dim() == 2:
+					# Handle 2D weight tensor (per-dimension weights)
+					num_samples = action_classes_flat.shape[0]
+					action_dim = class_weights.shape[0]
+					samples_per_dim = num_samples // action_dim
+					
+					dim_indices = torch.arange(action_dim, device=device).unsqueeze(1).expand(-1, samples_per_dim).reshape(-1)
+					
+					weights = torch.ones_like(action_classes_flat, dtype=torch.float)
+					valid_mask = action_classes_flat != -100
+					
+					if valid_mask.any():
+						valid_dim_indices = dim_indices[valid_mask]
+						valid_class_indices = action_classes_flat[valid_mask].long()
+						weights[valid_mask] = class_weights[valid_dim_indices, valid_class_indices]
+					
+					loss_f = nn.CrossEntropyLoss(ignore_index=-100, reduction='none')
+					cls_loss_per_sample = loss_f(logits_flat, action_classes_flat)
+					loss = (cls_loss_per_sample * weights).sum() / weights.sum()
+				else:
+					# Handle 1D weight tensor (global weights)
+					weights = torch.ones_like(action_classes_flat, dtype=torch.float)
+					valid_mask = action_classes_flat != -100
+					weights[valid_mask] = class_weights[action_classes_flat[valid_mask]]
+					loss_f = nn.CrossEntropyLoss(weight=class_weights, ignore_index=-100, reduction='none')
+					cls_loss_per_sample = loss_f(logits_flat, action_classes_flat)
+					loss = (cls_loss_per_sample * weights).sum() / weights.sum()
 			else:
 				loss = criterion(logits_flat, action_classes_flat)
 			
@@ -659,6 +725,26 @@ def main():
 				print(f"  Best validation loss: {best_val_loss:.6f} at epoch {best_epoch}")
 				print(f"{'='*60}")
 				break
+		
+		# Save periodic checkpoint every 100 epochs
+		if epoch % 100 == 0:
+			checkpoint_path = os.path.join(args.save_dir, f'checkpoint_epoch_{epoch}.pth')
+			torch.save({
+				'epoch': epoch,
+				'model_state_dict': model.state_dict(),
+				'optimizer_state_dict': optimizer.state_dict(),
+				'scheduler_state_dict': scheduler.state_dict(),
+				'train_loss': train_loss,
+				'val_loss': val_loss,
+				'args': vars(args),
+				'obs_dim': obs_dim,
+				'action_dim': action_dim,
+				'max_seq_len': max_seq_len,
+				'obs_mean': train_dataset.obs_mean.tolist() if train_dataset.obs_mean is not None else None,
+				'obs_std': train_dataset.obs_std.tolist() if train_dataset.obs_std is not None else None,
+				'class_weights': class_weights.tolist() if class_weights is not None else None
+			}, checkpoint_path)
+			print(f"  ✓ Checkpoint saved (epoch {epoch})")
 	
 	final_model_path = os.path.join(args.save_dir, 'final_model.pth')
 	torch.save({

@@ -22,7 +22,8 @@ class PolicyTester:
 	def __init__(self, model, device, pos_speed, rot_speed,
 				 obs_mean, obs_std, obs_dim, action_dim, 
 				 max_seq_len, debug=False, show_boundary=False, 
-				 speed=1.0, temperature=1.0, no_op_threshold=50, easy=False):
+				 speed=1.0, temperature=1.0, no_op_threshold=50, easy=False,
+				 step_by_step=False):
 		self.model = model
 		self.device = device
 		self.pos_speed = pos_speed
@@ -38,6 +39,7 @@ class PolicyTester:
 		self.temperature = temperature
 		self.no_op_threshold = no_op_threshold
 		self.easy = easy
+		self.step_by_step = step_by_step
 		
 		self.model.eval()
 		
@@ -46,6 +48,10 @@ class PolicyTester:
 		
 		# Track consecutive no-op actions
 		self.consecutive_no_ops = 0
+		
+		# Check if interactive input is available
+		import sys
+		self.input_available = sys.stdin.isatty()
 		
 		print(f"\nPolicy Tester initialized")
 		print(f"  Debug mode: {debug}")
@@ -56,6 +62,12 @@ class PolicyTester:
 		print(f"  Rotation speed: {rot_speed}")
 		print(f"  Temperature: {temperature}")
 		print(f"  No-op threshold: {no_op_threshold} steps")
+		print(f"  Step-by-step mode: {step_by_step}")
+		
+		if step_by_step and not self.input_available:
+			print(f"\n[WARNING] Step-by-step mode requested but interactive input not available!")
+			print(f"[WARNING] Running in continuous mode instead.")
+			self.step_by_step = False
 	
 	def get_action(self, obs):
 		"""Get action from model given current observation"""
@@ -153,23 +165,52 @@ class PolicyTester:
 		"""Reset observation history"""
 		self.obs_history = []
 	
-	def test_episode(self, env, max_steps=5000, view='front'):
+	def test_episode(self, env, max_steps=5000, view='front', render=True):
 		"""Test model on one episode"""
 		self.reset_history()
 		
-		env.set_camera_view(view)
+		if render:
+			env.set_camera_view(view)
 		obs = env.reset()
 		
 		done = False
 		step = 0
 		info_history = []
 		
+		if self.step_by_step:
+			print("\n" + "="*80)
+			print("STEP-BY-STEP MODE ENABLED")
+			print("="*80)
+			print("  Press Enter after each step to continue")
+			print("  Type 'skip' to run continuously")
+			print("  Type 'q' to quit episode")
+			print("="*80)
+		
 		try:
 			# Create progress bar
-			pbar = tqdm(range(max_steps), desc="Episode", disable=not self.debug,
+			pbar = tqdm(range(max_steps), desc="Episode", disable=self.step_by_step or not self.debug,
 						unit="step")
 			
 			for step in pbar:
+				if self.debug or self.step_by_step:
+					print(f"\n{'-'*80}")
+					print(f"Step {step}")
+					print(f"{'-'*80}")
+					if self.debug:
+						debug_info = self.last_debug_info
+						print(f"\n=== ACTION ===")
+						print(f"Position delta: ({debug_info['pos_delta'][0]:.4f}, {debug_info['pos_delta'][1]:.4f}, {debug_info['pos_delta'][2]:.4f})")
+						if not self.easy:
+							print(f"Rotation delta: ({debug_info['rot_delta'][0]:.4f}, {debug_info['rot_delta'][1]:.4f}, {debug_info['rot_delta'][2]:.4f})")
+						print(f"Gripper command: {debug_info['gripper_cmd']:.2f}")
+						print(f"Action norm: {debug_info['action_norm']:.4f}")
+						print(f"\n=== MODEL OUTPUT ===")
+						print(f"Sequence length: {debug_info['seq_len']}")
+						print(f"Logits range: [{debug_info['logits_range'][0]:.2f}, {debug_info['logits_range'][1]:.2f}]")
+						print(f"Temperature: {debug_info['temperature']:.2f}")
+						print(f"Consecutive no-ops: {debug_info['consecutive_no_ops']}")
+						print(f"Class indices: {debug_info['class_indices']}")
+				
 				action = self.get_action(obs)
 				
 				done, info = env.step(action)
@@ -178,7 +219,7 @@ class PolicyTester:
 				info_history.append(info.copy())
 				
 				# Update progress bar with debug info
-				if self.debug:
+				if self.debug and not self.step_by_step:
 					debug_info = self.last_debug_info
 					
 					# Format debug info for progress bar
@@ -209,10 +250,42 @@ class PolicyTester:
 					
 					pbar.set_postfix_str(' '.join(postfix))
 				
+				if self.debug or self.step_by_step:
+					print(f"\n=== ENVIRONMENT INFO ===")
+					print(f"Connected: {info['conn']}")
+					print(f"Hit target: {info['hit']}")
+					print(f"Boundary violation: {info['bnd_vio']}")
+					print(f"Episode done: {done}")
+				
+				if self.step_by_step and not done:
+					print(f"\n{'='*80}")
+					try:
+						user_input = input("Press Enter to continue (or type 'skip'/'q'): ")
+						if user_input.strip().lower() == 'skip':
+							self.step_by_step = False
+							print("\n[INFO] Switching to continuous mode...")
+						elif user_input.strip().lower() == 'q':
+							print("\n[INFO] Quitting episode...")
+							break
+					except (EOFError, KeyboardInterrupt):
+						print("\n[ERROR] Input not available!")
+						print("[ERROR] Switching to continuous mode...")
+						self.step_by_step = False
+					except Exception as e:
+						print(f"\n[ERROR] Unexpected error getting input: {e}")
+						print("[ERROR] Switching to continuous mode...")
+						self.step_by_step = False
+				
 				if done:
+					if self.debug or self.step_by_step:
+						print(f"\n{'-'*80}")
+						print(f"Episode finished at step {step}")
+						print(f"Reason: {'Target hit' if info['hit'] else 'Boundary violation'}")
+						print(f"{'-'*80}")
 					break
 				
-				time.sleep(1./ (self.speed * 60))
+				if render:
+					time.sleep(1./ (self.speed * 60))
 			
 			pbar.close()
 			
@@ -245,7 +318,8 @@ class PolicyTester:
 
 def test_model(env_config, model_path, device, num_episodes=10, max_steps=5000,
 				view='front', debug=False, show_boundary=False, speed=1.0,
-				temperature=1.0, no_op_threshold=50, easy=False):
+				temperature=1.0, no_op_threshold=50, easy=False, step_by_step=False,
+				render=True, seed=None):
 	"""Test model in randomized environment"""
 	
 	print("\n" + "="*60)
@@ -322,7 +396,8 @@ def test_model(env_config, model_path, device, num_episodes=10, max_steps=5000,
 		model, device, pos_speed, rot_speed, obs_mean, obs_std,
 		obs_dim, action_dim, max_seq_len, debug=debug, 
 		show_boundary=show_boundary, speed=speed,
-		temperature=temperature, no_op_threshold=no_op_threshold, easy=easy
+		temperature=temperature, no_op_threshold=no_op_threshold, easy=easy,
+		step_by_step=step_by_step
 	)
 	
 	print("\n" + "="*60)
@@ -332,6 +407,10 @@ def test_model(env_config, model_path, device, num_episodes=10, max_steps=5000,
 	print(f"  Number of episodes: {num_episodes}")
 	print(f"  Max steps per episode: {max_steps}")
 	print(f"  View: {view}")
+	print(f"  Render: {render}")
+	print(f"  Seed: {seed if seed is not None else 'Random'}")
+	if step_by_step:
+		print(f"  Step-by-step mode: ENABLED")
 	
 	results = []
 	
@@ -340,10 +419,15 @@ def test_model(env_config, model_path, device, num_episodes=10, max_steps=5000,
 		print(f"Episode {episode + 1}/{num_episodes}")
 		print(f"{'='*60}")
 		
-		env = ArmEnv(render=True, verbose=False, debug=debug, 
-					show_bnd=show_boundary, **env_config)
+		if seed is None:
+			episode_seed = None
+		else:
+			episode_seed = seed + episode
 		
-		result = tester.test_episode(env, max_steps=max_steps, view=view)
+		env = ArmEnv(render=render, verbose=False, debug=debug, 
+					show_bnd=show_boundary, seed=episode_seed, **env_config)
+		
+		result = tester.test_episode(env, max_steps=max_steps, view=view, render=render)
 		results.append(result)
 		
 		print(f"\nEpisode {episode + 1} Results:")
@@ -358,7 +442,7 @@ def test_model(env_config, model_path, device, num_episodes=10, max_steps=5000,
 		
 		env.close()
 		
-		if episode < num_episodes - 1:
+		if episode < num_episodes - 1 and render:
 			input("\nPress Enter to continue to next episode (or Ctrl+C to exit)...")
 	
 	# Calculate statistics
@@ -475,6 +559,12 @@ Examples:
 					   help='Directory to save test results')
 	parser.add_argument('--all-modes', action='store_true',
 					   help='Test all environment modes (default, randomized, hard)')
+	parser.add_argument('--step-by-step', action='store_true',
+					   help='Run step-by-step, waiting for user input after each step')
+	parser.add_argument('--no-render', action='store_true',
+					   help='Disable rendering (run in headless mode)')
+	parser.add_argument('--seed', type=int, default=None,
+					   help='Random seed (default: random)')
 	
 	args = parser.parse_args()
 	
@@ -529,11 +619,63 @@ Examples:
 		if results is not None:
 			all_results[config['name']] = results
 			
-			# Save results for this mode
+			# Save results for this mode (pickle format)
 			mode_save_path = os.path.join(args.save_dir, f"{config['name']}_results.pkl")
 			with open(mode_save_path, 'wb') as f:
 				pickle.dump(results, f)
 			print(f"\nResults for {config['name']} mode saved to: {mode_save_path}")
+			
+			# Save detailed text log
+			mode_log_path = os.path.join(args.save_dir, f"{config['name']}_results.log")
+			with open(mode_log_path, 'w') as f:
+				f.write("="*60 + "\n")
+				f.write(f"Test Results - Mode: {config['name']}\n")
+				f.write("="*60 + "\n\n")
+				
+				f.write("Model Information:\n")
+				f.write("-"*40 + "\n")
+				model_info = results['model_info']
+				f.write(f"  Epoch: {model_info['epoch']}\n")
+				f.write(f"  Train Loss: {model_info['train_loss']:.6f}\n")
+				f.write(f"  Val Loss: {model_info['val_loss']:.6f}\n")
+				f.write(f"  Total Parameters: {model_info['total_params']:,}\n")
+				f.write(f"  Easy Mode: {args.easy}\n")
+				f.write(f"  Temperature: {args.temperature}\n")
+				f.write(f"  No-op Threshold: {args.no_op_threshold}\n\n")
+				
+				f.write("Overall Statistics:\n")
+				f.write("-"*40 + "\n")
+				f.write(f"  Success Rate: {results['success_rate']:.2%}\n")
+				f.write(f"  Average Steps: {results['avg_steps']:.1f}\n")
+				f.write(f"  Connection Rate: {results['connect_rate']:.2%}\n")
+				f.write(f"  Hit Target Rate: {results['hit_rate']:.2%}\n")
+				f.write(f"  Boundary Violation Rate: {results['violation_rate']:.2%}\n\n")
+				
+				f.write("Environment Configuration:\n")
+				f.write("-"*40 + "\n")
+				f.write(f"  Randomize: {config['randomize']}\n")
+				f.write(f"  Hard: {config['hard']}\n")
+				f.write(f"  Easy: {args.easy}\n")
+				f.write(f"  Max Steps: {args.max_steps}\n")
+				f.write(f"  Seed: {args.seed if args.seed is not None else 'Random'}\n\n")
+				
+				f.write("Episode Results:\n")
+				f.write("-"*40 + "\n")
+				for i, ep_result in enumerate(results['episode_results']):
+					f.write(f"\nEpisode {i+1}:\n")
+					f.write(f"  Success: {'✓' if ep_result['success'] else '✗'}\n")
+					f.write(f"  Steps: {ep_result['steps']}\n")
+					f.write(f"  Connected: {'✓' if ep_result['connected'] else '✗'}\n")
+					f.write(f"  Hit Target: {'✓' if ep_result['hit_target'] else '✗'}\n")
+					f.write(f"  Boundary Violation: {'✓' if ep_result['boundary_violation'] else '✗'}\n")
+					if 'error' in ep_result:
+						f.write(f"  Error: {ep_result['error']}\n")
+				
+				f.write("\n" + "="*60 + "\n")
+				f.write(f"Generated by test.py\n")
+				f.write("="*60 + "\n")
+			
+			print(f"Text log saved to: {mode_log_path}")
 	
 	# Plot success rates if multiple modes tested
 	if len(all_results) > 1:

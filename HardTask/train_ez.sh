@@ -14,7 +14,7 @@ python train.py \
     --dropout 0.5 \
     --max-seq-len 2000 \
     --seed 42 \
-    --save-dir checkpoints \
+    --save-dir checkpoints_ez \
     --device cuda \
     --early-stopping-patience 1000 \
     --early-stopping-delta 1e-6 \
@@ -23,4 +23,5 @@ python train.py \
     --obs-embed-hidden 128 \
     --obs-embed-layers 3 \
     --use-class-weights \
-    --entropy-weight 0.03
+    --entropy-weight 0.03 \
+    --easy

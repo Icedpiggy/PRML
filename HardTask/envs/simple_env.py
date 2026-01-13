@@ -18,14 +18,17 @@ class SimpleRodEnv:
 	CTR_MAX = ROD_L * (1.0 + TOL)  # Max center distance for connection
 	BND_R = 2.0  # Boundary radius (m)
 	
-	def __init__(self, render=True, verbose=False, debug=False, show_bnd=False, randomize=False, hard=False, easy=False):
+	def __init__(self, render=True, verbose=False, debug=False, show_bnd=False, randomize=False, hard=False, easy=False, seed=None):
 		self.render = render
 		self.verbose = verbose
+		self.debug = debug
 		self.show_bnd = show_bnd
 		self.randomize = randomize
 		self.hard = hard
 		self.easy = easy
-		seed = int(time.time_ns())
+		if seed is None:
+			seed = int(time.time_ns())
+		self.seed = seed
 		self.rng = np.random.default_rng(seed)
 		if self.verbose:
 			print(f"Random seed: {seed}")
@@ -36,6 +39,7 @@ class SimpleRodEnv:
 		if render:
 			p.resetDebugVisualizerCamera(1.5, 0, 0, [0.5, 0, 0.3])
 			p.configureDebugVisualizer(p.COV_ENABLE_GUI, 1)
+			p.configureDebugVisualizer(p.COV_ENABLE_MOUSE_PICKING, 0)
 		
 		p.setAdditionalSearchPath(pybullet_data.getDataPath())
 		p.setGravity(0, 0, -9.81)
@@ -294,9 +298,9 @@ class SimpleRodEnv:
 		p.disconnect()
 
 
-def test_env(show_bnd=False, randomize=False, hard=False, easy=False):
-	print(f"Init env... (bnd:{'on' if show_bnd else 'off'}, rand:{'on' if randomize else 'off'}, hard:{'on' if hard else 'off'}, easy:{'on' if easy else 'off'})")
-	env = SimpleRodEnv(render=True, verbose=False, debug=True, show_bnd=show_bnd, randomize=randomize, hard=hard, easy=easy)
+def test_env(show_bnd=False, randomize=False, hard=False, easy=False, seed=None):
+	print(f"Init env... (bnd:{'on' if show_bnd else 'off'}, rand:{'on' if randomize else 'off'}, hard:{'on' if hard else 'off'}, easy:{'on' if easy else 'off'}, seed:{seed})")
+	env = SimpleRodEnv(render=True, verbose=False, debug=True, show_bnd=show_bnd, randomize=randomize, hard=hard, easy=easy, seed=seed)
 	step = 0
 	print("Start simulation...")
 	
@@ -337,7 +341,8 @@ if __name__ == "__main__":
 	parser.add_argument('-r', '--randomize', action='store_true', help='Randomize initial positions')
 	parser.add_argument('--hard', action='store_true', help='Enable hard mode (rods may be flat)')
 	parser.add_argument('--easy', action='store_true', help='Easy mode: no wall or target, done on connection')
+	parser.add_argument('-s', '--seed', type=int, default=None, help='Random seed (default: random)')
 	
 	args = parser.parse_args()
 	
-	test_env(show_bnd=args.show_boundary, randomize=args.randomize, hard=args.hard, easy=args.easy)
+	test_env(show_bnd=args.show_boundary, randomize=args.randomize, hard=args.hard, easy=args.easy, seed=args.seed)

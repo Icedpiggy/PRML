@@ -40,7 +40,7 @@ class ArmEnv:
 	ROD_COLORS = {'rod_a': [1, 0, 0], 'rod_b': [0, 0, 1], 'comb': [0.5, 0, 0.5]}  # Rod colors
 	DEBUG_LINE_LEN = 0.15  # Debug line extension length
 	
-	def __init__(self, render=True, verbose=False, debug=False, show_bnd=False, randomize=False, hard=False, easy=False):
+	def __init__(self, render=True, verbose=False, debug=False, show_bnd=False, randomize=False, hard=False, easy=False, seed=None):
 		self.render = render
 		self.verbose = verbose
 		self.debug = debug
@@ -48,7 +48,9 @@ class ArmEnv:
 		self.randomize = randomize
 		self.hard = hard
 		self.easy = easy
-		seed = int(time.time_ns())
+		if seed is None:
+			seed = int(time.time_ns())
+		self.seed = seed
 		self.rng = np.random.default_rng(seed)
 		if self.verbose:
 			print(f"Random seed: {seed}")
@@ -609,8 +611,8 @@ class ArmEnv:
 		p.disconnect()
 
 
-def test_env(show_bnd=False, randomize=False, debug=False, hard=False, easy=False):
-	env = ArmEnv(render=True, verbose=False, debug=debug, show_bnd=show_bnd, randomize=randomize, hard=hard, easy=easy)
+def test_env(show_bnd=False, randomize=False, debug=False, hard=False, easy=False, seed=None):
+	env = ArmEnv(render=True, verbose=False, debug=debug, show_bnd=show_bnd, randomize=randomize, hard=hard, easy=easy, seed=seed)
 	current_view = 'front'
 	
 	print("\nEnvironment initialized!")
@@ -732,7 +734,8 @@ if __name__ == "__main__":
 	parser.add_argument('--hard', action='store_true', help='Enable hard mode (rods may be flat)')
 	parser.add_argument('--easy', action='store_true', help='Easy mode: no wall or target, done on connection')
 	parser.add_argument('-d', '--debug', action='store_true', help='Show debug information')
+	parser.add_argument('-s', '--seed', type=int, default=None, help='Random seed (default: random)')
 	
 	args = parser.parse_args()
 	
-	test_env(show_bnd=args.show_boundary, randomize=args.randomize, hard=args.hard, easy=args.easy, debug=args.debug)
+	test_env(show_bnd=args.show_boundary, randomize=args.randomize, hard=args.hard, easy=args.easy, debug=args.debug, seed=args.seed)
