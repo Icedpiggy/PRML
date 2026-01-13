@@ -11,7 +11,7 @@ python train.py \
     --nhead 8 \
     --num-layers 4 \
     --dim-feedforward 256 \
-    --dropout 0.5 \
+    --dropout 0 \
     --max-seq-len 2000 \
     --seed 42 \
     --save-dir checkpoints_ez \
