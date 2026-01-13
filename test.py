@@ -133,7 +133,7 @@ class PolicyTester:
 		"""Reset observation history"""
 		self.obs_history = []
 	
-	def test_episode(self, env, max_steps=5000, view='front'):
+	def test_episode(self, env, max_steps=2000, view='front'):
 		"""Test model on one episode"""
 		self.reset_history()
 		
@@ -214,7 +214,7 @@ class PolicyTester:
 			}
 
 
-def test_model(env_config, model_path, device, num_episodes=10, max_steps=5000,
+def test_model(env_config, model_path, device, num_episodes=10, max_steps=2000,
 				view='front', debug=False, show_boundary=False, speed=1.0,
 				temperature=1.0, no_op_threshold=50):
 	"""Test model in environment"""
@@ -413,8 +413,8 @@ Examples:
 					   help='Path to trained model checkpoint')
 	parser.add_argument('--episodes', type=int, default=10,
 					   help='Number of test episodes (default: 10)')
-	parser.add_argument('--max-steps', type=int, default=5000,
-					   help='Maximum steps per episode (default: 5000)')
+	parser.add_argument('--max-steps', type=int, default=2000,
+					   help='Maximum steps per episode (default: 2000)')
 	parser.add_argument('--device', type=str, default='cuda',
 					   help='Device (cuda/cpu)')
 	parser.add_argument('--view', type=str, choices=['front', 'top', 'side'], default='front',

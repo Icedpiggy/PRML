@@ -9,7 +9,7 @@ class ArmEnv:
 	ROD_L = 0.2  # Rod length (m)
 	ROD_R = 0.02  # Rod radius (m)
 	ROD_M = 0.25  # Rod mass (kg)
-	TGT_HEIGHT = 0.3  # Target height (m) - rod center should reach this height
+	TGT_HEIGHT = 0.5 # Target height (m) - rod center should reach this height
 	BND_R = 1.0  # Boundary radius (m)
 	
 	NUM_ARM_JOINTS = 7  # Number of arm joints
@@ -61,9 +61,6 @@ class ArmEnv:
 		
 		if self.show_bnd:
 			self._create_bnd_marker()
-		
-		if self.render and self.debug:
-			self._create_target_marker()
 		
 		self.reset()
 	
@@ -125,13 +122,6 @@ class ArmEnv:
 			bv = p.createVisualShape(p.GEOM_BOX, halfExtents=he, rgbaColor=[1, 0, 0, 0.7])
 			q = [0, 0, np.sin((ang + np.pi/2) / 2), np.cos((ang + np.pi/2) / 2)]
 			p.createMultiBody(baseMass=0, baseVisualShapeIndex=bv, basePosition=[x, y, z], baseOrientation=q)
-	
-	def _create_target_marker(self):
-		# Create a translucent plane at target height
-		tv = p.createVisualShape(p.GEOM_BOX, halfExtents=[self.BND_R, self.BND_R, 0.01], 
-							   rgbaColor=[1, 1, 0, 0.3])
-		self.tgt_id = p.createMultiBody(baseMass=0, baseVisualShapeIndex=tv, 
-									  basePosition=[0, 0, self.TGT_HEIGHT], baseOrientation=[0, 0, 0, 1])
 	
 	def _check_bnd_vio(self) -> bool:
 		pos = p.getBasePositionAndOrientation(self.rod)[0]
@@ -210,7 +200,7 @@ class ArmEnv:
 		pos_delta = np.clip(action[:3], -self.MAX_POS_STEP, self.MAX_POS_STEP)
 		target_pos = np.array(cur_pos) + pos_delta
 		
-		target_orn = p.getQuaternionFromEuler([np.pi, 0, 0])
+		target_orn = cur_orn
 		
 		ik_joints = p.calculateInverseKinematics(
 			self.arm, self.END_IDX, target_pos, targetOrientation=target_orn,
@@ -268,10 +258,9 @@ def test_env(show_bnd=False, randomize=False, debug=False):
 	print("=" * 50)
 	print("7-DoF Arm (Franka Panda)")
 	print("Red rod: target object")
-	print("Yellow plane: target height")
 	print("Red circle: boundary (1m radius)")
 	print("=" * 50)
-	print("\nTask: Lift the rod to the target height (0.3m)")
+	print("\nTask: Lift the rod to the target height (0.5m)")
 	print("Keep the rod within 1m radius circle from origin")
 	print("\nKeyboard controls:")
 	print("Arm movement (IK control):")

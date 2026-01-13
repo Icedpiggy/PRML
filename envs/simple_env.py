@@ -9,7 +9,7 @@ class SimpleRodEnv:
 	ROD_L = 0.2  # Rod length (m)
 	ROD_R = 0.02  # Rod radius (m)
 	ROD_M = 0.25  # Rod mass (kg)
-	TGT_HEIGHT = 0.3  # Target height (m) - rod center should reach this height
+	TGT_HEIGHT = 0.5  # Target height (m) - rod center should reach this height
 	BND_R = 1.0  # Boundary radius (m)
 	
 	def __init__(self, render=True, verbose=False, debug=False, show_bnd=False, randomize=False):

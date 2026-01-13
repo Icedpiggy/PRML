@@ -9,7 +9,7 @@ from envs import ArmEnv
 class DataCollector:
 	BASE_DIR = 'data'
 	MIN_STEPS = 10
-	MAX_STEPS = 5000
+	MAX_STEPS = 2000
 	POS_SPEED = 0.5
 	
 	def __init__(self, dataset_type='train', debug=False, randomize=False, show_boundary=False):

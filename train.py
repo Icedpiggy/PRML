@@ -370,7 +370,7 @@ def main():
 					   help='Feedforward network dimension')
 	parser.add_argument('--dropout', type=float, default=0.1, 
 					   help='Dropout rate')
-	parser.add_argument('--max-seq-len', type=int, default=5000, 
+	parser.add_argument('--max-seq-len', type=int, default=2000, 
 					   help='Maximum sequence length, None means auto-determine')
 	parser.add_argument('--no-pad', action='store_true', 
 					   help='Disable padding')

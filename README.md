@@ -164,7 +164,7 @@ python test.py --model-path checkpoints/best_model.pth
 **主要参数：**
 ```bash
 --episodes EPISODES      测试回合数（默认：10）
---max-steps MAX_STEPS    每回合最大步数（默认：5000）
+--max-steps MAX_STEPS    每回合最大步数（默认：2000）
 --view VIEW              视角（front/top/side）
 --randomize              随机化初始位置
 --hard                   困难模式

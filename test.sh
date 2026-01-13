@@ -5,7 +5,7 @@
 python test.py \
     --model-path checkpoints/best_model.pth \
     --episodes 10 \
-    --max-steps 5000 \
+    --max-steps 2000 \
     --device cuda \
     --view front \
     --randomize \
