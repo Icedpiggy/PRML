@@ -6,39 +6,39 @@ from typing import Tuple, Dict, List
 
 
 class ArmEnv:
-	ROD_L = 0.2  # Single rod length (m)
-	ROD_R = 0.02  # Rod radius (m)
-	ROD_M = 0.25  # Rod mass (kg)
-	COMB_L = ROD_L * 2  # Combined rod length (m)
-	COMB_M = ROD_M * 2  # Combined rod mass (kg)
-	TGT_TH = 0.05  # Target hit threshold (m)
-	TOL = 0.1  # Connection tolerance
-	END_TH = ROD_L * TOL  # End-to-end threshold for connection
-	CTR_MIN = ROD_L * (1.0 - TOL)  # Min center distance for connection
-	CTR_MAX = ROD_L * (1.0 + TOL)  # Max center distance for connection
-	BND_R = 2.0  # Boundary radius (m)
+	ROD_L = 0.2
+	ROD_R = 0.02
+	ROD_M = 0.25
+	COMB_L = ROD_L * 2
+	COMB_M = ROD_M * 2
+	TGT_TH = 0.05
+	TOL = 0.1
+	END_TH = ROD_L * TOL
+	CTR_MIN = ROD_L * (1.0 - TOL)
+	CTR_MAX = ROD_L * (1.0 + TOL)
+	BND_R = 2.0
 	
-	NUM_ARM_JOINTS = 7  # Number of arm joints
-	NUM_MOVABLE_JOINTS = 9  # Number of movable joints (arm + gripper)
-	END_IDX = 11  # End-effector link index
-	GRIPPER_JOINTS = [9, 10]  # Gripper joint indices
-	INIT_JOINTS = [0, -0.785, 0, -2.356, 0, 1.571, 0]  # Initial joint positions
-	GRIPPER_OPEN = 0.04  # Gripper open position
-	GRIPPER_CLOSED = 0.0  # Gripper closed position
+	NUM_ARM_JOINTS = 7
+	NUM_MOVABLE_JOINTS = 9
+	END_IDX = 11
+	GRIPPER_JOINTS = [9, 10]
+	INIT_JOINTS = [0, -0.785, 0, -2.356, 0, 1.571, 0]
+	GRIPPER_OPEN = 0.04
+	GRIPPER_CLOSED = 0.0
 	
-	MAX_POS_STEP = 0.02  # Max position step per action
-	MAX_ROT_STEP = 0.1  # Max rotation step per action
-	JOINT_FORCE = 500  # Joint motor force
-	GRIPPER_FORCE = 300  # Gripper motor force
+	MAX_POS_STEP = 0.02
+	MAX_ROT_STEP = 0.1
+	JOINT_FORCE = 500
+	GRIPPER_FORCE = 300
 	
 	CAMERA_CONFIGS = {
 		'front': {'distance': 1.5, 'yaw': 0, 'pitch': -30, 'target': [0, 0, 0.3]},
 		'top': {'distance': 1.5, 'yaw': 0, 'pitch': -89.9, 'target': [0, 0, 0.3]},
 		'side': {'distance': 1.5, 'yaw': 90, 'pitch': -30, 'target': [0, 0, 0.3]},
-	}  # Camera view configurations
+	}
 	
-	ROD_COLORS = {'rod_a': [1, 0, 0], 'rod_b': [0, 0, 1], 'comb': [0.5, 0, 0.5]}  # Rod colors
-	DEBUG_LINE_LEN = 0.15  # Debug line extension length
+	ROD_COLORS = {'rod_a': [1, 0, 0], 'rod_b': [0, 0, 1], 'comb': [0.5, 0, 0.5]}
+	DEBUG_LINE_LEN = 0.15
 	
 	def __init__(self, render=True, verbose=False, debug=False, show_bnd=False, randomize=False, hard=False, easy=False, seed=None):
 		self.render = render
@@ -170,7 +170,6 @@ class ArmEnv:
 		return list(pos) + list(orn) + list(vel) + list(ang_v)
 	
 	def _create_walls(self):
-		# In easy mode, don't create walls or target
 		if self.easy:
 			return None, None
 		
@@ -347,15 +346,12 @@ class ArmEnv:
 			print(f"  rod_c_state length: {len(rod_c_state)}")
 		
 		if self.easy:
-			# In easy mode, return: joint_pos (9) + joint_vel (9) + end_pos (3) + end_orn (4) + rod_a (13) + rod_b (13) = 51
-			# Include all joints: 7 arm + 2 gripper = 9 joints
 			obs = np.array(joint_pos + joint_vel + list(end_pos) + list(end_orn) +
 						   rod_a_state + rod_b_state)
 			if self.verbose:
 				print(f"  Easy mode obs length: {len(obs)}")
 			return obs
 		else:
-			# Normal mode: return full 64-dimensional observation
 			conn_state = [1.0] if self.conn else [0.0]
 			return np.array(conn_state + joint_pos + joint_vel + list(end_pos) + list(end_orn) +
 						   rod_a_state + rod_b_state + rod_c_state + list(self.tgt_pos))
@@ -565,7 +561,6 @@ class ArmEnv:
 		return False
 	
 	def _check_hit(self) -> bool:
-		# In easy mode, no target exists, so hit is always False
 		if self.easy:
 			return False
 		
@@ -579,7 +574,6 @@ class ArmEnv:
 	
 	def _is_done(self) -> bool:
 		if self.easy:
-			# In easy mode, done when connected
 			return self.conn or self._check_bnd_vio()
 		else:
 			return (self.conn and self._check_hit()) or self._check_bnd_vio()

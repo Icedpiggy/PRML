@@ -1,7 +1,4 @@
 #!/usr/bin/env python3
-"""
-Test script for trained Transformer policy network in randomized ArmEnv
-"""
 
 import os
 import argparse
@@ -17,7 +14,6 @@ from envs import ArmEnv
 
 
 class PolicyTester:
-	"""Tester for policy in randomized environment"""
 	
 	def __init__(self, model, device, pos_speed, rot_speed,
 				 obs_mean, obs_std, obs_dim, action_dim, 
@@ -66,7 +62,6 @@ class PolicyTester:
 			self.step_by_step = False
 	
 	def get_action(self, obs):
-		"""Get action from model given current observation"""
 		obs_normalized = (obs.astype(np.float32) - 
 						 self.obs_mean.astype(np.float32)) / self.obs_std.astype(np.float32)
 		
@@ -137,11 +132,9 @@ class PolicyTester:
 		return action
 	
 	def reset_history(self):
-		"""Reset observation history"""
 		self.obs_history = []
 	
 	def test_episode(self, env, max_steps=5000, view='front', render=True):
-		"""Test model on one episode"""
 		self.reset_history()
 		
 		if render:
@@ -162,7 +155,6 @@ class PolicyTester:
 			print("="*80)
 		
 		try:
-			# Create progress bar (disable only in step-by-step mode)
 			pbar = tqdm(range(max_steps), desc="Episode", disable=self.step_by_step,
 						unit="step")
 			
@@ -193,7 +185,6 @@ class PolicyTester:
 				
 				info_history.append(info.copy())
 				
-				# Update progress bar
 				if not self.step_by_step:
 					postfix = []
 					postfix.append(f"conn={info['conn']}")
@@ -207,19 +198,16 @@ class PolicyTester:
 							d = min(np.linalg.norm(e - np.array(env.tgt_pos)) for e in ends)
 							postfix.append(f"dist={d:.3f}m")
 						
-						# Add action info
 						postfix.append(f"pos=({debug_info['pos_delta'][0]:.3f},{debug_info['pos_delta'][1]:.3f},{debug_info['pos_delta'][2]:.3f})")
 						if not self.easy:
 							postfix.append(f"rot=({debug_info['rot_delta'][0]:.3f},{debug_info['rot_delta'][1]:.3f},{debug_info['rot_delta'][2]:.3f})")
 						postfix.append(f"grip={debug_info['gripper_cmd']:.1f}")
 						
-						# Add model output info
 						postfix.append(f"seq_len={debug_info['seq_len']}")
 						postfix.append(f"logits=[{debug_info['logits_range'][0]:.2f},{debug_info['logits_range'][1]:.2f}]")
 						postfix.append(f"temp={debug_info['temperature']:.2f}")
 						postfix.append(f"no_op={debug_info['consecutive_no_ops']}")
 						
-						# Format class indices
 						classes_str = ''.join(map(str, debug_info['class_indices']))
 						postfix.append(f"classes={classes_str}")
 					
@@ -295,7 +283,6 @@ def test_model(env_config, model_path, device, num_episodes=10, max_steps=5000,
 				view='front', debug=False, show_boundary=False, speed=1.0,
 				temperature=1.0, no_op_threshold=50, easy=False, step_by_step=False,
 				render=True, seed=None):
-	"""Test model in randomized environment"""
 	
 	print("\n" + "="*60)
 	print("Loading model...")
@@ -311,7 +298,6 @@ def test_model(env_config, model_path, device, num_episodes=10, max_steps=5000,
 	action_dim = checkpoint['action_dim']
 	max_seq_len = checkpoint['max_seq_len']
 	
-	# Get action speeds from checkpoint or use defaults
 	pos_speed = checkpoint['args'].get('pos_speed', 0.5)
 	rot_speed = checkpoint['args'].get('rot_speed', 0.5)
 	
@@ -321,7 +307,6 @@ def test_model(env_config, model_path, device, num_episodes=10, max_steps=5000,
 	if obs_mean is None or obs_std is None:
 		print("\nWarning: Observation normalization statistics not found in checkpoint!")
 		print("Model was trained without observation normalization.")
-		# Use identity normalization (mean=0, std=1) as numpy arrays
 		obs_mean = np.zeros((1, obs_dim), dtype=np.float32)
 		obs_std = np.ones((1, obs_dim), dtype=np.float32)
 	
@@ -344,7 +329,6 @@ def test_model(env_config, model_path, device, num_episodes=10, max_steps=5000,
 	print("Creating model...")
 	print("="*60)
 	
-	# Get obs_embed parameters from checkpoint or use defaults
 	obs_embed_hidden = checkpoint['args'].get('obs_embed_hidden', 256)
 	obs_embed_layers = checkpoint['args'].get('obs_embed_layers', 2)
 	
@@ -420,7 +404,6 @@ def test_model(env_config, model_path, device, num_episodes=10, max_steps=5000,
 		if episode < num_episodes - 1 and render:
 			input("\nPress Enter to continue to next episode (or Ctrl+C to exit)...")
 	
-	# Calculate statistics
 	success_rate = np.mean([r['success'] for r in results])
 	avg_steps = np.mean([r['steps'] for r in results])
 	connect_rate = np.mean([r['connected'] for r in results])
@@ -453,7 +436,6 @@ def test_model(env_config, model_path, device, num_episodes=10, max_steps=5000,
 
 
 def plot_success_rates(results_by_mode, save_path):
-	"""Plot success rates for different environment modes"""
 	modes = list(results_by_mode.keys())
 	success_rates = [r['success_rate'] for r in results_by_mode.values()]
 	
@@ -468,7 +450,6 @@ def plot_success_rates(results_by_mode, save_path):
 	ax.set_ylim([0, 1.05])
 	ax.grid(True, alpha=0.3, axis='y')
 	
-	# Add percentage labels on bars
 	for bar, rate in zip(bars, success_rates):
 		height = bar.get_height()
 		ax.text(bar.get_x() + bar.get_width()/2., height,
@@ -548,7 +529,6 @@ Examples:
 	
 	os.makedirs(args.save_dir, exist_ok=True)
 	
-	# Test configurations
 	if args.all_modes:
 		test_configs = [
 			{'name': 'default', 'randomize': False, 'hard': False},
@@ -597,13 +577,11 @@ Examples:
 		if results is not None:
 			all_results[config['name']] = results
 			
-			# Save results for this mode (pickle format)
 			mode_save_path = os.path.join(args.save_dir, f"{config['name']}_results.pkl")
 			with open(mode_save_path, 'wb') as f:
 				pickle.dump(results, f)
 			print(f"\nResults for {config['name']} mode saved to: {mode_save_path}")
 			
-			# Save detailed text log
 			mode_log_path = os.path.join(args.save_dir, f"{config['name']}_results.log")
 			with open(mode_log_path, 'w') as f:
 				f.write("="*60 + "\n")
@@ -655,12 +633,10 @@ Examples:
 			
 			print(f"Text log saved to: {mode_log_path}")
 	
-	# Plot success rates if multiple modes tested
 	if len(all_results) > 1:
 		plot_path = os.path.join(args.save_dir, 'success_rates.png')
 		plot_success_rates(all_results, plot_path)
 		
-		# Save all results together
 		all_results_path = os.path.join(args.save_dir, 'all_results.pkl')
 		with open(all_results_path, 'wb') as f:
 			pickle.dump(all_results, f)

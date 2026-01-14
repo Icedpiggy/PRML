@@ -10,7 +10,6 @@ from envs import ArmEnv
 class TrajectoryReplayer:
 	BASE_DIR = 'data'
 	
-	# Observation structure constants
 	OBS_CONN_STATE = 1
 	OBS_JOINT_POS = 9
 	OBS_JOINT_VEL = 9
@@ -20,11 +19,10 @@ class TrajectoryReplayer:
 	OBS_TGT_POS = 3
 	OBS_TOTAL = 68
 	
-	# Error thresholds for warnings
-	WARN_END_POS_THRESHOLD = 0.05  # meters
-	WARN_END_ORN_THRESHOLD = 0.05  # quaternion norm
-	WARN_JOINT_THRESHOLD = 0.1  # radians
-	WARN_ROD_THRESHOLD = 0.5  # meters
+	WARN_END_POS_THRESHOLD = 0.05
+	WARN_END_ORN_THRESHOLD = 0.05
+	WARN_JOINT_THRESHOLD = 0.1
+	WARN_ROD_THRESHOLD = 0.5
 	
 	def __init__(self, debug=False, show_boundary=False, speed=1.0, render=True):
 		self.env = ArmEnv(render=render, verbose=False, debug=debug, 
@@ -38,11 +36,9 @@ class TrajectoryReplayer:
 		print(f"  Playback speed: {speed}x")
 		print(f"  Render mode: {render}")
 		
-		# Set fixed random seed for deterministic replay
 		np.random.seed(42)
 	
 	def load_trajectory(self, filepath) -> Dict:
-		"""Load trajectory from pickle file"""
 		if not os.path.exists(filepath):
 			raise FileNotFoundError(f"Trajectory file not found: {filepath}")
 		
@@ -61,7 +57,6 @@ class TrajectoryReplayer:
 		return traj
 	
 	def replay(self, traj: Dict, view: str = 'front', compare_with_original: bool = True) -> List[np.ndarray]:
-		"""Replay trajectory with optional comparison to original"""
 		print("\n" + "=" * 60)
 		print("Starting trajectory replay")
 		print("=" * 60)
@@ -77,15 +72,12 @@ class TrajectoryReplayer:
 		actions = traj['actions']
 		length = min(len(observations), len(actions))
 		
-		# Load initial state from first observation
 		self._load_initial_state(observations[0], traj.get('scene_info', {}))
 		
 		print(f"\nReplaying {length} steps...")
 		
-		# Store replay observations for comparison
 		replay_observations = []
 		
-		# Print initial real-time comparison header
 		if compare_with_original:
 			print("\nReal-time Error Statistics (updated every 100 steps):")
 			print("-" * 60)
@@ -97,11 +89,9 @@ class TrajectoryReplayer:
 				action = np.array(actions[step])
 				done, info = self.env.step(action)
 				
-				# Record current observation for comparison
 				current_obs = self.env.get_obs()
 				replay_observations.append(current_obs)
 				
-				# Print real-time comparison every 100 steps
 				if (step + 1) % 100 == 0 and compare_with_original:
 					self._print_realtime_comparison(
 						observations[:len(replay_observations)], 
@@ -127,7 +117,6 @@ class TrajectoryReplayer:
 					print(f"  Final connected: {info['conn']}")
 					print(f"  Final hit target: {info['hit']}")
 			
-			# Calculate and display comparison with original trajectory
 			if compare_with_original and len(replay_observations) > 0:
 				self._print_comparison(observations[:len(replay_observations)], replay_observations)
 		
@@ -143,7 +132,6 @@ class TrajectoryReplayer:
 		return replay_observations
 	
 	def _parse_observation_structure(self, obs: np.ndarray) -> Dict[str, np.ndarray]:
-		"""Parse observation into structured dictionary"""
 		return {
 			'conn_state': obs[0:self.OBS_CONN_STATE],
 			'joint_pos': obs[self.OBS_CONN_STATE:self.OBS_CONN_STATE+self.OBS_JOINT_POS],
@@ -158,41 +146,34 @@ class TrajectoryReplayer:
 	
 	def _print_realtime_comparison(self, original_obs: np.ndarray, replay_obs: List[np.ndarray], 
 								current_step: int, info: Dict) -> None:
-		"""Print real-time comparison at current step"""
 		original_obs = np.array(original_obs)
 		replay_obs = np.array(replay_obs)
 		
-		# Calculate absolute differences
 		diff = np.abs(original_obs - replay_obs)
 		
-		# Calculate current errors
 		end_pos_error = np.linalg.norm(diff[-1, self.OBS_CONN_STATE+self.OBS_JOINT_POS+self.OBS_JOINT_VEL:self.OBS_CONN_STATE+self.OBS_JOINT_POS+self.OBS_JOINT_VEL+self.OBS_END_POS])
 		end_orn_error = np.linalg.norm(diff[-1, self.OBS_CONN_STATE+self.OBS_JOINT_POS+self.OBS_JOINT_VEL+self.OBS_END_POS:self.OBS_CONN_STATE+self.OBS_JOINT_POS+self.OBS_JOINT_VEL+self.OBS_END_POS+self.OBS_END_ORN])
 		joint_pos_error = np.mean(diff[-1, self.OBS_CONN_STATE:self.OBS_CONN_STATE+self.OBS_JOINT_POS])
 		
-		# Calculate cumulative errors
 		end_pos_cum_error = np.sum(np.linalg.norm(
 			diff[:, self.OBS_CONN_STATE+self.OBS_JOINT_POS+self.OBS_JOINT_VEL:self.OBS_CONN_STATE+self.OBS_JOINT_POS+self.OBS_JOINT_VEL+self.OBS_END_POS], 
 			axis=1
 		))
 		
-		# Get rod error (whichever is active)
 		rod_error = 0.0
 		rod_b_start = self.OBS_CONN_STATE+self.OBS_JOINT_POS+self.OBS_JOINT_VEL+self.OBS_END_POS+self.OBS_END_ORN+2*self.OBS_ROD_STATE
 		rod_a_start = self.OBS_CONN_STATE+self.OBS_JOINT_POS+self.OBS_JOINT_VEL+self.OBS_END_POS+self.OBS_END_ORN+self.OBS_ROD_STATE
 		
-		if np.any(original_obs[-1, rod_b_start:rod_b_start+3] != 0):  # Rod B exists
+		if np.any(original_obs[-1, rod_b_start:rod_b_start+3] != 0):
 			rod_error = np.linalg.norm(diff[-1, rod_b_start:rod_b_start+3])
-		elif np.any(original_obs[-1, rod_a_start:rod_a_start+3] != 0):  # Rod A exists
+		elif np.any(original_obs[-1, rod_a_start:rod_a_start+3] != 0):
 			rod_error = np.linalg.norm(diff[-1, rod_a_start:rod_a_start+3])
 		
-		# Add warning markers if errors exceed thresholds
 		warn_pos = "!" if end_pos_error > self.WARN_END_POS_THRESHOLD else ""
 		warn_orn = "!" if end_orn_error > self.WARN_END_ORN_THRESHOLD else ""
 		warn_joint = "!" if joint_pos_error > self.WARN_JOINT_THRESHOLD else ""
 		warn_rod = "!" if rod_error > self.WARN_ROD_THRESHOLD else ""
 		
-		# Print formatted output
 		print(f"\rStep {current_step:4d} | "
 			  f"End-Pos: {end_pos_error:6.3f}m{warn_pos} | "
 			  f"End-Orn: {end_orn_error:6.3f}{warn_orn} | "
@@ -203,55 +184,40 @@ class TrajectoryReplayer:
 			  end="", flush=True)
 	
 	def _load_initial_state(self, obs, scene_info):
-		"""Load initial state from observation with improved stability"""
 		import pybullet as p
-		
-		# Parse observation based on get_obs() format:
-		# conn_state (1) + joint_pos (9) + joint_vel (9) + end_pos (3) + end_orn (4) +
-		# rod_a_state (13) + rod_b_state (13) + rod_c_state (13) + tgt_pos (3) = 68
 		
 		idx = 0
 		
-		# Connection state (1)
 		conn_state = obs[idx]
 		idx += 1
 		
-		# Joint positions (9: 7 arm + 2 gripper)
 		joint_pos = obs[idx:idx+9]
 		idx += 9
 		
-		# Joint velocities (9: 7 arm + 2 gripper)
 		joint_vel = obs[idx:idx+9]
 		idx += 9
 		
-		# End-effector position (3) and orientation (4)
 		end_pos = obs[idx:idx+3]
 		idx += 3
 		end_orn = obs[idx:idx+4]
 		idx += 4
 		
-		# Rod A state (13: pos 3, orn 4, vel 3, ang_vel 3)
 		rod_a_state = obs[idx:idx+13]
 		idx += 13
 		
-		# Rod B state (13: pos 3, orn 4, vel 3, ang_vel 3)
 		rod_b_state = obs[idx:idx+13]
 		idx += 13
 		
-		# Rod C state (13: pos 3, orn 4, vel 3, ang_vel 3)
 		rod_c_state = obs[idx:idx+13]
 		idx += 13
 		
-		# Target position (3)
 		tgt_pos = obs[idx:idx+3]
 		
-		# Reset environment to initial state
 		self.env.conn = (conn_state == 1.0)
 		
 		NUM_ARM_JOINTS = 7
 		GRIPPER_JOINTS = [9, 10]
 		
-		# Step 1: Reset wall and target first (static objects)
 		self.env.tgt_pos = list(tgt_pos)
 		if self.env.tgt_id:
 			p.resetBasePositionAndOrientation(self.env.tgt_id, tgt_pos, [0, 0, 0, 1])
@@ -263,18 +229,15 @@ class TrajectoryReplayer:
 			self.env.wall_pos = wall_pos
 			self.env.wall_orn = wall_orn
 		
-		# Step 2: Set gripper state before resetting joints
 		gripper_pos = joint_pos[NUM_ARM_JOINTS]
 		self.env.gripper_closed = (gripper_pos < self.env.GRIPPER_CLOSED + 0.01)
 		
-		# Step 3: Reset arm joints with positions and target positions
 		for i in range(NUM_ARM_JOINTS):
 			p.resetJointState(self.env.arm, i, joint_pos[i], joint_vel[i])
 		
 		for gj_idx, gj in enumerate(GRIPPER_JOINTS):
 			p.resetJointState(self.env.arm, gj, joint_pos[NUM_ARM_JOINTS + gj_idx], 0.0)
 		
-		# Step 4: Apply motor controls after resetting all joints
 		for i in range(NUM_ARM_JOINTS):
 			p.setJointMotorControl2(self.env.arm, i, p.POSITION_CONTROL, 
 								   targetPosition=joint_pos[i], 
@@ -287,9 +250,7 @@ class TrajectoryReplayer:
 								   force=self.env.GRIPPER_FORCE,
 								   maxVelocity=self.env.GRIPPER_FORCE)
 		
-		# Step 5: Handle rods based on connection state
 		if self.env.conn and rod_c_state[0:3] != [0.0] * 3:
-			# Connected state - set combined rod
 			if self.env.rod_a:
 				p.removeBody(self.env.rod_a)
 			if self.env.rod_b:
@@ -298,7 +259,6 @@ class TrajectoryReplayer:
 			self.env.rod_a = self.env.rod_b = None
 			
 			if self.env.comb is None:
-				# Create combined rod if it doesn't exist
 				self.env.comb = self.env._create_rod([0.5, 0, 0.5, 1], rod_c_state[0:3], 
 													  length=self.env.COMB_L, 
 													  mass=self.env.COMB_M, 
@@ -311,15 +271,12 @@ class TrajectoryReplayer:
 								   rod_c_state[7:10], 
 								   rod_c_state[10:13])
 			
-			# Set collision filter for combined rod
 			p.setCollisionFilterPair(self.env.arm, self.env.comb, -1, -1, 0)
 		else:
-			# Not connected - set individual rods
 			if self.env.comb:
 				p.removeBody(self.env.comb)
 				self.env.comb = None
 			
-			# Create or reset rod A
 			if self.env.rod_a is None:
 				self.env.rod_a = self.env._create_rod([1, 0, 0, 1], rod_a_state[0:3], 
 													   orn=rod_a_state[3:7])
@@ -331,7 +288,6 @@ class TrajectoryReplayer:
 								   rod_a_state[7:10], 
 								   rod_a_state[10:13])
 			
-			# Create or reset rod B
 			if self.env.rod_b is None:
 				self.env.rod_b = self.env._create_rod([0, 0, 1, 1], rod_b_state[0:3], 
 													   orn=rod_b_state[3:7])
@@ -343,16 +299,12 @@ class TrajectoryReplayer:
 								   rod_b_state[7:10], 
 								   rod_b_state[10:13])
 			
-			# Remove collision filters for individual rods (allow collisions)
 			p.setCollisionFilterPair(self.env.arm, self.env.rod_a, -1, -1, 1)
 			p.setCollisionFilterPair(self.env.arm, self.env.rod_b, -1, -1, 1)
 		
-		# Step 6: Stabilize simulation with multiple steps
-		# Increase stability steps for better state convergence
 		for _ in range(10):
 			p.stepSimulation()
 		
-		# Step 7: Re-apply joint controls to ensure arm holds position
 		for i in range(NUM_ARM_JOINTS):
 			p.setJointMotorControl2(self.env.arm, i, p.POSITION_CONTROL, 
 								   targetPosition=joint_pos[i], 
@@ -365,12 +317,10 @@ class TrajectoryReplayer:
 								   force=self.env.GRIPPER_FORCE,
 								   maxVelocity=self.env.GRIPPER_FORCE)
 		
-		# Additional stabilization steps
 		for _ in range(5):
 			p.stepSimulation()
 	
 	def _print_comparison(self, original_obs: List[np.ndarray], replay_obs: List[np.ndarray]) -> None:
-		"""Print detailed comparison between original and replayed trajectories"""
 		print("\n" + "=" * 60)
 		print("Trajectory Comparison (Replay vs Original)")
 		print("=" * 60)
@@ -378,10 +328,8 @@ class TrajectoryReplayer:
 		original_obs = np.array(original_obs)
 		replay_obs = np.array(replay_obs)
 		
-		# Calculate absolute differences
 		diff = np.abs(original_obs - replay_obs)
 		
-		# Calculate indices for each component
 		idx = 0
 		conn_idx = idx
 		idx += self.OBS_CONN_STATE
@@ -401,7 +349,6 @@ class TrajectoryReplayer:
 		idx += self.OBS_ROD_STATE
 		tgt_idx = idx
 		
-		# Extract differences
 		conn_diff = diff[:, conn_idx]
 		joint_pos_diff = diff[:, joint_pos_idx:joint_pos_idx+self.OBS_JOINT_POS]
 		joint_vel_diff = diff[:, joint_vel_idx:joint_vel_idx+self.OBS_JOINT_VEL]
@@ -412,9 +359,7 @@ class TrajectoryReplayer:
 		rod_c_diff = diff[:, rod_c_idx:rod_c_idx+self.OBS_ROD_STATE]
 		tgt_pos_diff = diff[:, tgt_idx:]
 		
-		# Helper function to print statistics
 		def print_stats(name, data: np.ndarray, active: bool = True) -> None:
-			"""Print mean, max, and RMS statistics"""
 			if not active:
 				print(f"   {name} not present in trajectory")
 				return
@@ -430,15 +375,12 @@ class TrajectoryReplayer:
 			print(f"   Max:  {max_val}")
 			print(f"   RMS:  {rms}")
 		
-		# 1. End-effector Position Error
 		print("\n1. End-effector Position Error:")
 		print_stats("Position", end_pos_diff)
 		
-		# 2. End-effector Orientation Error
 		print("\n2. End-effector Orientation Error (quaternion):")
 		print_stats("Orientation", end_orn_diff)
 		
-		# 3. Joint Position Error
 		print("\n3. Joint Position Error:")
 		for i in range(self.OBS_JOINT_POS):
 			joint_name = f"Arm {i}" if i < 7 else f"Gripper {i-6}"
@@ -447,41 +389,34 @@ class TrajectoryReplayer:
 			warn = "!" if mean > self.WARN_JOINT_THRESHOLD else ""
 			print(f"   {joint_name}: mean={mean:.6f}, max={max_val:.6f}{warn}")
 		
-		# 4. Rod A Position Error
 		print("\n4. Rod A Position Error:")
 		rod_a_active = np.any(original_obs[:, rod_a_idx:rod_a_idx+3] != 0)
 		print_stats("Rod A", rod_a_diff[:, 0:3], rod_a_active)
 		
-		# 5. Rod B Position Error
 		print("\n5. Rod B Position Error:")
 		rod_b_active = np.any(original_obs[:, rod_b_idx:rod_b_idx+3] != 0)
 		print_stats("Rod B", rod_b_diff[:, 0:3], rod_b_active)
 		
-		# 6. Rod C (Combined) Position Error
 		print("\n6. Rod C (Combined) Position Error:")
 		rod_c_active = np.any(original_obs[:, rod_c_idx:rod_c_idx+3] != 0)
 		print_stats("Combined rod", rod_c_diff[:, 0:3], rod_c_active)
 		
-		# 7. Overall Statistics
 		print("\n7. Overall Statistics:")
 		print(f"   Total steps: {len(original_obs)}")
 		conn_matches = np.sum(np.abs(conn_diff) < 0.01)
 		print(f"   Connection matches: {conn_matches} / {len(conn_diff)} ({100*conn_matches/len(conn_diff):.1f}%)")
 		print(f"   Target position diff: {np.mean(tgt_pos_diff):.6f}")
 		
-		# 8. Cumulative Errors
 		print("\n8. Cumulative Errors:")
 		end_pos_cum_error = np.cumsum(np.linalg.norm(end_pos_diff, axis=1))
 		percentiles = [0.25, 0.5, 0.75, 1.0]
 		for p in percentiles:
-			# Handle boundary case when p=1.0
 			idx_p = min(int(len(end_pos_cum_error) * p), len(end_pos_cum_error) - 1)
 			print(f"   At {int(p*100):3d}%: {end_pos_cum_error[idx_p]:.4f}")
 		
 		print("=" * 60)
 	
 	def list_trajectories(self, dataset_type: str) -> List[str]:
-		"""List all trajectory files in the specified dataset directory"""
 		save_dir = os.path.join(self.BASE_DIR, dataset_type)
 		if not os.path.exists(save_dir):
 			return []
@@ -492,7 +427,6 @@ class TrajectoryReplayer:
 		return files
 	
 	def close(self) -> None:
-		"""Close the environment"""
 		self.env.close()
 
 
@@ -537,7 +471,6 @@ Examples:
 	
 	args = parser.parse_args()
 	
-	# Validate arguments
 	if args.all and args.file:
 		print("Error: Cannot use both -a/--all and -f/--file at the same time")
 		return
@@ -551,7 +484,6 @@ Examples:
 	
 	try:
 		if args.all:
-			# Replay all trajectories in the dataset
 			print(f"\n" + "=" * 60)
 			print(f"Replaying ALL trajectories from {args.type.upper()} dataset")
 			print("=" * 60)
@@ -600,7 +532,6 @@ Examples:
 			print("=" * 60)
 		
 		else:
-			# Replay a specific trajectory
 			replayer = TrajectoryReplayer(debug=args.debug, 
 										  show_boundary=args.show_boundary, 
 										  speed=args.speed,
